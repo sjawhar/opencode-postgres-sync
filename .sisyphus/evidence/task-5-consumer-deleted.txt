@@ -1,0 +1,3 @@
+=== Checking consumer.ts ===
+
+✓ File successfully deleted

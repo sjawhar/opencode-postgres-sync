@@ -1,0 +1,24 @@
+Task 3 event routing evidence
+
+Verification commands run from /home/ubuntu/opencode/opencode-postgres-sync:
+- bun typecheck
+  - exit 0
+  - output: $ tsc --noEmit
+- bun test
+  - exit 0
+  - output summary: 22 pass, 0 fail, 59 expect() calls
+
+Relevant index.ts lines:
+- src/index.ts:150-155
+  - hooks.event() calls replayBus(sql, event, machine)
+  - replay failures are caught and logged with warn("replay failed", err)
+- src/index.ts:157-177
+  - todo.updated is still synced via syncTodos(...)
+  - session.status idle still checkpoints via checkpoint(...)
+
+Supporting route coverage:
+- src/projectors.ts:529-571 defines replayBus(sql, evt, machine)
+- src/projectors.ts:535-567 handles session.created, session.updated, session.deleted, message.updated, message.removed, message.part.updated, and message.part.removed
+
+Behavior regression coverage:
+- src/index.check.ts validates that index.ts routes message.updated, todo.updated, and session.status through replayBus(), then exercises syncTodos(), session metadata refresh, remoteStatus(), pullSession(), and checkpoint persistence.

@@ -1,0 +1,29 @@
+=== DEAD CODE VERIFICATION ===
+
+Search: "consumer" in src/*.ts
+Result: 
+src/index.check.ts:31:mock.module("./consumer.js", () => ({
+src/index.check.ts:33:    throw new Error("consumer should not start")
+src/index.check.ts:119:  test("starts without the SSE consumer and primes metadata sync", async () => {
+
+NOTE: Only references are in test file (mocking to verify consumer does NOT load).
+No actual consumer code in src/.
+
+Search: "serverUrl" in src/*.ts
+Result: No matches found ✓
+
+Search: "OPENCODE_SERVER" in src/*.ts
+Result: No matches found ✓
+
+Search: "sync-event" in src/*.ts
+Result: No matches found ✓
+
+File check: src/consumer.ts
+Result: File does not exist ✓
+
+SUMMARY:
+✓ consumer.ts deleted
+✓ serverUrl removed
+✓ OPENCODE_SERVER removed
+✓ sync-event removed
+✓ All HTTP-related dead code eliminated

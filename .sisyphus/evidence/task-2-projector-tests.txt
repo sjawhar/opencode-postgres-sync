@@ -1,0 +1,7 @@
+$ bun test src/projectors.test.ts
+bun test v1.3.11 (af24e281)
+
+ 13 pass
+ 0 fail
+ 37 expect() calls
+Ran 13 tests across 1 file. [11.00ms]

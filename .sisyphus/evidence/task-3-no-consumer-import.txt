@@ -1,0 +1,17 @@
+Task 3 consumer removal evidence
+
+src/index.ts imports now:
+- ./local.js
+- ./tools.js
+- ./projectors.js
+
+No consumer import remains in src/index.ts.
+
+Checks:
+- grep count for pattern "consumer" in src/index.ts returned no matches
+- src/index.ts line 14 imports replayBus and syncTodos from ./projectors.js
+- src/index.ts no longer reads options.serverUrl or input.serverUrl
+
+Isolation regression coverage:
+- src/index.check.ts mocks ./consumer.js to throw "consumer should not start"
+- isolated behavior test still passes via bun test ./src/index.check.ts, proving index.ts no longer depends on the SSE consumer path

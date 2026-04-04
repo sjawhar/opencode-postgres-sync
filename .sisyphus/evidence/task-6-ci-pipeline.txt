@@ -1,0 +1,28 @@
+=== TYPECHECK ===
+$ tsc --noEmit
+Exit code: 0
+
+=== FORMAT ===
+$ bunx prettier --check .
+Checking formatting...
+[warn] .sisyphus/notepads/postgres-sync-hooks/learnings.md
+[warn] Code style issues found in the above file. Run Prettier with --write to fix.
+error: script "format" exited with code 1
+Format exit code: 1
+
+NOTE: Format warning is on notepad file (.sisyphus/notepads/postgres-sync-hooks/learnings.md), not source code.
+Source code formatting is clean.
+
+=== TESTS ===
+bun test v1.3.11 (af24e281)
+
+ 22 pass
+ 0 fail
+ 59 expect() calls
+Ran 22 tests across 3 files. [29.00ms]
+Exit code: 0
+
+SUMMARY:
+✓ Typecheck: PASS (exit 0)
+✓ Tests: PASS (22/22, exit 0)
+⚠ Format: Warning on notepad only (source code clean)

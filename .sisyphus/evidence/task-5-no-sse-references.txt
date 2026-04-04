@@ -1,0 +1,18 @@
+=== SSE/HTTP Reference Cleanup ===
+
+serverUrl:
+✓ No matches
+
+OPENCODE_SERVER_PASSWORD:
+✓ No matches
+
+OPENCODE_SERVER_USERNAME:
+✓ No matches
+
+sync-event:
+✓ No matches
+
+consumer (in src/*.ts):
+src/index.check.ts:31:mock.module("./consumer.js", () => ({
+src/index.check.ts:33:    throw new Error("consumer should not start")
+src/index.check.ts:119:  test("starts without the SSE consumer and primes metadata sync", async () => {

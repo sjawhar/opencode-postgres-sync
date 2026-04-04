@@ -1,0 +1,13 @@
+Task 3 timer evidence
+
+Relevant index.ts lines:
+- src/index.ts:143 calls void tick() for the initial metadata/checkpoint sync
+- src/index.ts:144 creates the single recurring timer with setInterval(..., 30000)
+- src/index.ts:147 calls timer.unref()
+
+Checks:
+- grep count for pattern "setInterval" in src/index.ts returned 1 match
+- grep count for pattern "unref" in src/index.ts returned 1 match
+
+Behavior regression coverage:
+- src/index.check.ts verifies one 30000ms timer registration and one unref() call during plugin startup
