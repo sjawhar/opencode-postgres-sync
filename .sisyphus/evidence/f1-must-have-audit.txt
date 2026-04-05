@@ -1,0 +1,20 @@
+F1 Must Have Audit
+
+1. session.created projection: PASS
+   - src/projectors.ts:23, 485-487, 535-537
+2. session.updated projection: PASS
+   - src/projectors.ts:24, 491-494, 540-542
+3. session.deleted projection: PASS
+   - src/projectors.ts:25, 498-500, 545-547
+4. message event projection: PASS
+   - src/projectors.ts:26-29, 504-524, 550-567
+5. todo.updated sync in hooks.event(): PASS
+   - src/index.ts:158-169
+6. session.status checkpoint trigger: PASS
+   - src/index.ts:171-174
+7. 30s metadata timer: PASS
+   - src/index.ts:143-147
+8. PluginOptions url usage: PASS
+   - src/index.ts:71, 73
+9. bun test: PASS
+   - 22 pass, 0 fail

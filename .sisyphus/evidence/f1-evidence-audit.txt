@@ -1,0 +1,24 @@
+F1 Evidence Audit
+
+1. task-1-*.md: PASS (2 files)
+   - task-1-event-contract-map.md
+   - task-1-part-delta-semantics.md
+2. task-2-*.txt: PASS (3 files)
+   - task-2-no-versioned-types.txt
+   - task-2-part-delta-test.txt
+   - task-2-projector-tests.txt
+3. task-3-*.txt: PASS (3 files)
+   - task-3-event-routing.txt
+   - task-3-no-consumer-import.txt
+   - task-3-timer-singleton.txt
+4. task-4-*.txt: PASS (2 files)
+   - task-4-backfill-unchanged.txt
+   - task-4-replication-state.txt
+5. task-5-*.txt: PASS (3 files)
+   - task-5-build-passes.txt
+   - task-5-consumer-deleted.txt
+   - task-5-no-sse-references.txt
+6. task-6-*.txt: PASS (3 files)
+   - task-6-ci-pipeline.txt
+   - task-6-dead-code.txt
+   - task-6-runtime-verification.txt

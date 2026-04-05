@@ -1,0 +1,22 @@
+F2: CI Pipeline Evidence
+========================
+
+## Typecheck
+Command: bun typecheck (tsc --noEmit)
+Exit code: 0
+Result: PASS
+
+## Format
+Command: bun run format (bunx prettier --check .)
+Exit code: 1
+Result: WARN - Only failure is .sisyphus/notepads/postgres-sync-hooks/learnings.md (notepad file, not source code)
+Source files (src/projectors.ts, src/index.ts): PASS
+
+## Tests
+Command: bun test
+Exit code: 0
+Result: PASS
+- 22 pass, 0 fail
+- 59 expect() calls
+- 3 test files
+- Runtime: 29.00ms

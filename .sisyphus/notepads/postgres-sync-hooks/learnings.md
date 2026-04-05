@@ -3,6 +3,7 @@
 ## Task 5: Consumer Deletion & SSE Artifact Purge
 
 ### Completed Actions
+
 1. ✓ Deleted `src/consumer.ts` (6157 bytes)
 2. ✓ Removed env var fallbacks from `src/index.ts`:
    - Line 71: Changed `const url = (options?.url as string) ?? process.env.OPENCODE_SHARED_DB` → `const url = options?.url as string`
@@ -15,15 +16,17 @@
    - OPENCODE_SHARED_DB: 0 matches (removed from index.ts)
    - OPENCODE_SYNC_MACHINE: 0 matches (removed from index.ts)
    - sync-event: 0 matches
-   - consumer (in src/*.ts): 0 matches (only test mocks remain in index.check.ts)
+   - consumer (in src/\*.ts): 0 matches (only test mocks remain in index.check.ts)
 4. ✓ Build verification:
    - `bun typecheck`: PASS
    - `bun test`: 22 pass, 0 fail, 59 expect() calls
 
 ### Key Insight
+
 The plugin now depends ONLY on PluginOptions (options.url, options.machine) for configuration. No environment variables are consulted. This enforces the contract that the plugin is configured via the plugin system, not via process.env.
 
 ### Evidence Files
+
 - `.sisyphus/evidence/task-5-consumer-deleted.txt`
 - `.sisyphus/evidence/task-5-no-sse-references.txt`
 - `.sisyphus/evidence/task-5-build-passes.txt`

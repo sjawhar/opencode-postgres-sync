@@ -28,10 +28,8 @@ mock.module("postgres", () => ({
   },
 }))
 
-mock.module("./consumer.js", () => ({
-  start() {
-    throw new Error("consumer should not start")
-  },
+mock.module("./backfill.js", () => ({
+  async backfill() {},
 }))
 
 mock.module("./projectors.js", () => ({
@@ -77,6 +75,7 @@ mock.module("./log.js", () => ({
   warn(...args: unknown[]) {
     hit.warn.push(args)
   },
+  info() {},
 }))
 
 mock.module("./tools.js", () => ({

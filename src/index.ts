@@ -12,6 +12,7 @@ import {
 } from "./local.js"
 import { tools } from "./tools.js"
 import { replayBus, syncTodos, type Todo } from "./projectors.js"
+import { backfill } from "./backfill.js"
 
 type TodoEvent = {
   type: "todo.updated"
@@ -90,21 +91,12 @@ const plugin: Plugin = async (_, options) => {
     return {}
   }
 
-  const meta = async () => {
+  const sync = async () => {
     try {
       await syncMetadata(sql, machine)
       await refreshCheckpoints(sql, machine)
     } catch (err) {
       warn("metadata sync failed", err)
-    }
-  }
-
-  const tick = async () => {
-    try {
-      await syncMetadata(sql, machine)
-      await refreshCheckpoints(sql, machine)
-    } catch (err) {
-      warn("metadata sync deferred", err)
     }
   }
 
@@ -140,9 +132,10 @@ const plugin: Plugin = async (_, options) => {
     }
   }
 
-  void tick()
+  void backfill(sql, machine)
+  void sync()
   const timer = setInterval(() => {
-    void tick()
+    void sync()
   }, 30000)
   timer.unref()
 
@@ -177,7 +170,7 @@ const plugin: Plugin = async (_, options) => {
       }
     },
     "session.list.before": async () => {
-      await timeout(meta, 3000, undefined)
+      await timeout(sync, 3000, undefined)
     },
     "session.status.before": async (
       _: {},

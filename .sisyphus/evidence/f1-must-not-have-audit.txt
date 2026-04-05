@@ -1,0 +1,11 @@
+F1 Must NOT Have Audit
+
+1. OPENCODE_SERVER_PASSWORD in src/: PASS (0 matches)
+2. OPENCODE_SERVER_USERNAME in src/: PASS (0 matches)
+3. OPENCODE_SHARED_DB in src/: PASS (0 matches)
+4. OPENCODE_SYNC_MACHINE in src/: PASS (0 matches)
+5. serverUrl in src/: PASS (0 matches)
+6. sync-event in src/: PASS (0 matches)
+7. src/consumer.ts absent: PASS (no files found)
+8. packages/opencode/ untouched in /home/ubuntu/opencode/db jj diff --git: PASS
+   - No diff headers matched ^diff --git a/packages/opencode/ or corresponding ---/+++ lines

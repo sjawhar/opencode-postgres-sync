@@ -1,0 +1,32 @@
+F2: Quality Review Evidence
+============================
+
+## Anti-pattern Scan
+- `as any`: 0 hits
+- `@ts-ignore` / `@ts-expect-error`: 0 hits
+- `console.log` / `console.warn` / `console.error`: 0 hits (uses custom `warn` from ./log.js)
+- `TODO` / `FIXME` / `HACK`: 0 hits
+
+## projectors.ts (671 lines) Review
+- No excessive comments (zero comments in file — lean and self-documenting)
+- No unused imports (Db, Tx both used)
+- No AI slop — names are concise single-word: txt, num, obj, pack, json, run, session, message, part
+- Follows style guide: snake_case DB columns, single-word helpers, const-first, early returns
+- Type casts: `v as Obj` (line 51) is behind a type guard — acceptable. `sql as unknown as Db` (line 78) is a double cast for Tx→Db conversion — standard postgres.js pattern.
+- Clean separation: data projectors (session, message, part), bus routing (routeBus), replay functions (replay, replayBus), todo sync (syncTodos)
+- No over-abstraction — each function does one thing
+
+## index.ts (211 lines) Review
+- No excessive comments
+- All imports used
+- Proper error handling via `warn()` — no raw console calls
+- Timer properly unref'd (line 147)
+- `timeout` utility is clean and minimal
+- Hook structure is clear and well-organized
+- Minor observation: `meta` (lines 93-100) and `tick` (lines 102-109) have identical bodies with different warn messages — mild duplication but acceptable given they serve different call sites (init vs interval)
+- Type narrowing for TodoEvent and StatusEvent via `as` cast (lines 158, 171) — pragmatic approach for plugin event typing
+- No unused wrappers or unnecessary abstractions
+
+## Summary
+Quality: CLEAN
+No anti-patterns, no AI slop, no unused code, follows project conventions.

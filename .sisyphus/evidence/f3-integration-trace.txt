@@ -1,0 +1,56 @@
+F3 Scenario 2: Cross-Task Integration Trace
+=============================================
+
+## Import chain
+src/index.ts line 14:
+  import { replayBus, syncTodos, type Todo } from "./projectors.js"
+
+## Data flow: hooks.event() → replayBus() → routeBus() → projectors
+
+### Step 1: hooks.event() receives bus event
+src/index.ts lines 150-178:
+  event: async ({ event }) => {
+    try {
+      await replayBus(sql, event, machine)    // ← calls replayBus with raw event
+    } catch (err) {
+      warn("replay failed", err)
+    }
+    // Also handles todo.updated and session.status separately
+  }
+
+Input shape: event is { type: string, properties: Obj } (Bus type)
+
+### Step 2: replayBus() wraps in transaction, calls routeBus()
+src/projectors.ts lines 529-572:
+  export async function replayBus(sql: Db, evt: Bus, machine: string) {
+    return sql.begin(async (tx) => {
+      const db = run(tx)
+      const next = routeBus(evt)           // ← routes event to typed union
+      if (!next) return true               // ← unknown events → silent success
+
+### Step 3: routeBus() pattern-matches on event type
+src/projectors.ts lines 484-527:
+  Matches: session.created, session.updated, session.deleted,
+           message.updated, message.removed,
+           message.part.updated, message.part.removed
+  Returns: BusRoute (typed discriminated union) or undefined
+
+### Step 4: replayBus() dispatches to projector functions
+  session.created  → replaySession(db, info, machine)     [upsert full session row]
+  session.updated  → replaySession(db, info, machine)     [upsert full session row]
+  session.deleted  → DELETE FROM session WHERE id = ...
+  message.updated  → upsertMessage(db, info)              [upsert message + ensure session]
+  message.removed  → DELETE FROM message WHERE id = ...
+  message.part.updated → upsertPart(db, part, time)       [upsert part + ensure session]
+  message.part.removed → DELETE FROM part WHERE id = ...
+
+All branches return true after writing.
+
+## Verification
+- All 7 Bus event types have corresponding routeBus() cases ✅
+- All 7 Bus event types have corresponding replayBus() handlers ✅
+- BusRoute discriminated union type matches all cases ✅
+- Transaction wraps all writes (sql.begin) ✅
+- ensureSession/ensureProject called for upserts ✅
+
+Integration: PASS
