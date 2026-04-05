@@ -535,7 +535,7 @@ export async function backfill(sql: Db, machine: string) {
     }
   }
 
-  // Always sync per-tree shard DBs (catches events missed during SSE disconnect)
+  // Always sync per-tree shard DBs (catches events missed while the plugin was not running)
   const root = sessions()
   if (!existsSync(root)) return
 
