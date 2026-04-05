@@ -1,5 +1,4 @@
 import { existsSync, readdirSync } from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import { Database as SQLite } from "bun:sqlite"
 import type { Db, Tx } from "./schema.js"
@@ -31,8 +30,8 @@ const enc = new TextEncoder()
 import { warn, info } from "./log.js"
 
 function base() {
-  const home = process.env.OPENCODE_TEST_HOME || os.homedir()
-  return process.env.XDG_DATA_HOME || path.join(home, ".local", "share")
+  if (process.env.XDG_DATA_HOME) return process.env.XDG_DATA_HOME
+  return path.join(process.env.OPENCODE_TEST_HOME || process.env.HOME || "", ".local", "share")
 }
 
 function data() {
@@ -41,27 +40,6 @@ function data() {
 
 function sessions() {
   return path.join(data(), "sessions")
-}
-
-function globalDb() {
-  const root = data()
-  if (process.env.OPENCODE_DB) {
-    if (process.env.OPENCODE_DB === ":memory:") return undefined
-    if (path.isAbsolute(process.env.OPENCODE_DB)) return process.env.OPENCODE_DB
-    return path.join(root, process.env.OPENCODE_DB)
-  }
-
-  const preferred = ["opencode-local.db", "opencode.db"]
-  for (const item of preferred) {
-    const file = path.join(root, item)
-    if (existsSync(file)) return file
-  }
-
-  const rest = readdirSync(root)
-    .filter((item) => /^opencode.*\.db$/.test(item))
-    .sort()
-  if (!rest.length) return undefined
-  return path.join(root, rest[0])
 }
 
 function txt(v: unknown) {
@@ -96,11 +74,6 @@ function pack(v: unknown) {
   } catch {
     return { raw, json: null as Obj | null }
   }
-}
-
-function json(sql: Db, value: Obj | null) {
-  if (!value) return sql`NULL`
-  return sql`${JSON.stringify(value)}::jsonb`
 }
 
 function run(sql: Tx | Db) {
@@ -147,10 +120,16 @@ async function copyProjects(sql: Db, db: SQLite) {
     }
   })
 
-  await sql.begin(async (tx) => {
-    const db = run(tx)
-    await db`INSERT INTO project ${db(values, ["id", "worktree", "vcs", "name", "icon_url", "icon_color", "sandboxes", "sandboxes_raw", "commands", "commands_raw", "time_created", "time_updated", "time_initialized"])} ON CONFLICT (id) DO NOTHING`
-  })
+  for (const value of values) {
+    try {
+      await sql.begin(async (tx) => {
+        const db = run(tx)
+        await db`INSERT INTO project ${db(value, ["id", "worktree", "vcs", "name", "icon_url", "icon_color", "sandboxes", "sandboxes_raw", "commands", "commands_raw", "time_created", "time_updated", "time_initialized"])} ON CONFLICT (id) DO NOTHING`
+      })
+    } catch (err) {
+      warn(`project ${value.id} insert failed`, err)
+    }
+  }
 }
 
 async function copyWorkspaces(sql: Db, db: SQLite) {
@@ -246,13 +225,22 @@ async function copyAccounts(sql: Db, db: SQLite) {
   })
 }
 
-async function copySessions(sql: Db, db: SQLite) {
-  const rows = db
-    .query(
-      "SELECT id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session ORDER BY time_created, id",
-    )
-    .all() as Array<Record<string, unknown>>
-  if (!rows.length) return
+async function copySessions(sql: Db, db: SQLite, maxDays: number) {
+  const cut = maxDays > 0 ? Date.now() - maxDays * 86400000 : undefined
+  const rows = (
+    cut == null
+      ? db
+          .query(
+            "SELECT id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session ORDER BY time_created, id",
+          )
+          .all()
+      : db
+          .query(
+            "SELECT id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session WHERE time_created >= ? ORDER BY time_created, id",
+          )
+          .all(cut)
+  ) as Array<Record<string, unknown>>
+  if (!rows.length) return new Set<string>()
 
   const map = new Map(rows.map((row) => [txt(row.id) ?? "", row]))
   const memo = new Map<string, string>()
@@ -312,18 +300,27 @@ async function copySessions(sql: Db, db: SQLite) {
     const db = run(tx)
     await db`INSERT INTO session ${db(values, ["id", "project_id", "workspace_id", "parent_id", "root_session_id", "slug", "directory", "title", "version", "share_url", "summary_additions", "summary_deletions", "summary_files", "summary_diffs", "summary_diffs_raw", "revert", "revert_raw", "permission", "permission_raw", "time_created", "time_updated", "time_compacting", "time_archived", "data", "data_raw", "origin_machine"])} ON CONFLICT (id) DO NOTHING`
   })
+
+  return new Set(values.map((row) => row.id))
 }
 
-async function copySessionShares(sql: Db, db: SQLite) {
+function keep<T extends Record<string, unknown>>(rows: T[], ids?: Set<string>, key = "session_id") {
+  if (!ids) return rows
+  if (!ids.size) return []
+  return rows.filter((row) => ids.has(txt(row[key]) ?? ""))
+}
+
+async function copySessionShares(sql: Db, db: SQLite, ids?: Set<string>) {
   const rows = db
     .query("SELECT session_id, id, secret, url, time_created, time_updated FROM session_share ORDER BY session_id")
     .all() as Array<Record<string, unknown>>
-  if (!rows.length) return
+  const list = keep(rows, ids)
+  if (!list.length) return
 
   await sql.begin(async (tx) => {
     const db = run(tx)
     await db`INSERT INTO session_share ${db(
-      rows.map((row) => ({
+      list.map((row) => ({
         session_id: txt(row.session_id) ?? "",
         id: txt(row.id) ?? "",
         secret: txt(row.secret) ?? "",
@@ -359,13 +356,14 @@ async function copyPermissions(sql: Db, db: SQLite) {
   })
 }
 
-async function copyMessages(sql: Db, db: SQLite) {
+async function copyMessages(sql: Db, db: SQLite, ids?: Set<string>) {
   const rows = db
     .query("SELECT id, session_id, time_created, time_updated, data FROM message ORDER BY rowid ASC")
     .all() as Array<Record<string, unknown>>
-  if (!rows.length) return
+  const list = keep(rows, ids)
+  if (!list.length) return
 
-  const values = rows.map((row) => {
+  const values = list.map((row) => {
     const data = pack(row.data)
     const info = data.json ?? {}
     return {
@@ -388,13 +386,14 @@ async function copyMessages(sql: Db, db: SQLite) {
   })
 }
 
-async function copyParts(sql: Db, db: SQLite) {
+async function copyParts(sql: Db, db: SQLite, ids?: Set<string>) {
   const rows = db
     .query("SELECT id, message_id, session_id, time_created, time_updated, data FROM part ORDER BY rowid ASC")
     .all() as Array<Record<string, unknown>>
-  if (!rows.length) return
+  const list = keep(rows, ids)
+  if (!list.length) return
 
-  const values = rows.map((row) => {
+  const values = list.map((row) => {
     const data = pack(row.data)
     const meta = partMeta(data.json ?? {})
     return {
@@ -420,14 +419,15 @@ async function copyParts(sql: Db, db: SQLite) {
   })
 }
 
-async function copyTodos(sql: Db, db: SQLite) {
+async function copyTodos(sql: Db, db: SQLite, ids?: Set<string>) {
   const rows = db
     .query<
       TodoRow,
       []
     >("SELECT session_id, position, content, status, priority, time_updated FROM todo ORDER BY session_id ASC, position ASC")
     .all()
-  if (!rows.length) return
+  const list = keep(rows, ids)
+  if (!list.length) return
 
   const map = new Map<
     string,
@@ -436,7 +436,7 @@ async function copyTodos(sql: Db, db: SQLite) {
       time?: number
     }
   >()
-  for (const row of rows) {
+  for (const row of list) {
     const item = map.get(row.session_id) ?? {
       list: [],
       time: row.time_updated ?? undefined,
@@ -455,16 +455,17 @@ async function copyTodos(sql: Db, db: SQLite) {
   }
 }
 
-async function copyEventSequence(sql: Db, db: SQLite) {
+async function copyEventSequence(sql: Db, db: SQLite, ids?: Set<string>) {
   const rows = db.query("SELECT aggregate_id, seq FROM event_sequence ORDER BY aggregate_id").all() as Array<
     Record<string, unknown>
   >
-  if (!rows.length) return
+  const list = keep(rows, ids, "aggregate_id")
+  if (!list.length) return
 
   await sql.begin(async (tx) => {
     const db = run(tx)
     await db`INSERT INTO event_sequence ${db(
-      rows.map((row) => ({
+      list.map((row) => ({
         aggregate_id: txt(row.aggregate_id) ?? "",
         seq: num(row.seq) ?? 0,
       })),
@@ -473,13 +474,14 @@ async function copyEventSequence(sql: Db, db: SQLite) {
   })
 }
 
-async function copyEvents(sql: Db, db: SQLite) {
+async function copyEvents(sql: Db, db: SQLite, ids?: Set<string>) {
   const rows = db
     .query<EventRow, []>("SELECT id, aggregate_id, seq, type, data, origin FROM event ORDER BY rowid ASC")
     .all()
-  if (!rows.length) return [] as EventRow[]
+  const list = keep(rows, ids, "aggregate_id") as EventRow[]
+  if (!list.length) return [] as EventRow[]
 
-  const values = rows.map((row) => {
+  const values = list.map((row) => {
     const data = pack(row.data)
     const origin = pack(row.origin ?? null)
     return {
@@ -499,7 +501,7 @@ async function copyEvents(sql: Db, db: SQLite) {
     await db`INSERT INTO event ${db(values, ["id", "aggregate_id", "seq", "type", "data", "data_raw", "origin", "origin_raw"])} ON CONFLICT (id) DO NOTHING`
   })
 
-  return rows
+  return list
 }
 
 async function checkpoint(sql: Db, sid: string, rows: EventRow[], machine: string) {
@@ -510,25 +512,27 @@ async function checkpoint(sql: Db, sid: string, rows: EventRow[], machine: strin
   await save(sql, mid, sid, last.id, last.seq)
 }
 
-export async function backfill(sql: Db, machine: string) {
+export async function backfill(sql: Db, machine: string, file: string, maxDays: number) {
+  if (maxDays === 0) return
+
   const initial = await fresh(sql, machine)
+  let ids: Set<string> | undefined
 
   if (initial) {
-    const file = globalDb()
     if (file && existsSync(file)) {
       const db = new SQLite(file, { readonly: true })
       try {
         await copyProjects(sql, db)
         await copyWorkspaces(sql, db)
         await copyAccounts(sql, db)
-        await copySessions(sql, db)
-        await copySessionShares(sql, db)
+        ids = await copySessions(sql, db, maxDays)
+        await copySessionShares(sql, db, ids)
         await copyPermissions(sql, db)
-        await copyMessages(sql, db)
-        await copyParts(sql, db)
-        await copyTodos(sql, db)
-        await copyEventSequence(sql, db)
-        await copyEvents(sql, db)
+        await copyMessages(sql, db, ids)
+        await copyParts(sql, db, ids)
+        await copyTodos(sql, db, ids)
+        await copyEventSequence(sql, db, ids)
+        await copyEvents(sql, db, ids)
       } finally {
         db.close()
       }
@@ -545,13 +549,14 @@ export async function backfill(sql: Db, machine: string) {
 
   for (const file of files) {
     const sid = file.slice(0, -3)
+    if (ids && !ids.has(sid)) continue
     const db = new SQLite(path.join(root, file), { readonly: true })
     try {
-      await copyMessages(sql, db)
-      await copyParts(sql, db)
-      await copyTodos(sql, db)
-      await copyEventSequence(sql, db)
-      const rows = await copyEvents(sql, db)
+      await copyMessages(sql, db, ids)
+      await copyParts(sql, db, ids)
+      await copyTodos(sql, db, ids)
+      await copyEventSequence(sql, db, ids)
+      const rows = await copyEvents(sql, db, ids)
       await checkpoint(sql, sid, rows, machine)
       if (rows.length) info(`Synced session ${sid} (${rows.length} events)`)
     } catch (err) {

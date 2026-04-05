@@ -9,6 +9,7 @@ type Hooks = {
 
 const sql = {} as never
 const hit = {
+  backfill: [] as Array<{ machine: string; file: string; maxDays: number }>,
   replay: [] as Array<{ evt: { type: string }; machine: string }>,
   todo: [] as Array<{ sid: string; todos: Array<{ content: string; status: string; priority: string }> }>,
   pull: [] as string[],
@@ -22,73 +23,188 @@ const hit = {
 }
 let fail = false
 
-mock.module("postgres", () => ({
-  default() {
-    return sql
-  },
-}))
+function txt(v: unknown) {
+  return typeof v === "string" ? v : undefined
+}
 
-mock.module("./backfill.js", () => ({
-  async backfill() {},
-}))
+function num(v: unknown) {
+  return typeof v === "number" ? v : undefined
+}
 
-mock.module("./projectors.js", () => ({
-  async replayBus(_: unknown, evt: { type: string }, machine: string) {
-    if (fail) throw new Error("boom")
-    hit.replay.push({ evt, machine })
-  },
-  async syncTodos(_: unknown, sid: string, todos: Array<{ content: string; status: string; priority: string }>) {
-    hit.todo.push({ sid, todos })
-  },
-}))
+function obj(v: unknown) {
+  return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined
+}
 
-mock.module("./local.js", () => ({
-  checkpointState() {
-    return {
-      safe: true,
-      checkpointTime: 123,
-      lastMessageID: "msg_1",
-    }
-  },
-  async pullSession(_: unknown, sid: string) {
-    hit.pull.push(sid)
-  },
-  async refreshCheckpoints() {
-    hit.fresh += 1
-  },
-  async remoteStatus() {
-    hit.remote += 1
-    return { ses_remote: { type: "idle" as const } }
-  },
-  async saveCheckpoint(
-    _: unknown,
-    input: { sessionID: string; machine: string; checkpointTime: number; lastMessageID: string | null },
-  ) {
-    hit.save.push(input)
-  },
-  async syncMetadata() {
-    hit.meta += 1
-  },
-}))
+async function load() {
+  mock.module("postgres", () => ({
+    default() {
+      return sql
+    },
+  }))
 
-mock.module("./log.js", () => ({
-  warn(...args: unknown[]) {
-    hit.warn.push(args)
-  },
-  info() {},
-}))
+  mock.module("./backfill.js", () => ({
+    async backfill(_: unknown, machine: string, file: string, maxDays: number) {
+      hit.backfill.push({ machine, file, maxDays })
+    },
+  }))
 
-mock.module("./tools.js", () => ({
-  tools() {
-    return "tool"
-  },
-}))
+  mock.module("./projectors.js", () => ({
+    message(v: Record<string, unknown>) {
+      const time = obj(v.time)
+      const model = obj(v.model)
+      return {
+        id: txt(v.id) ?? "",
+        session_id: txt(v.sessionID) ?? "",
+        role: txt(v.role) ?? null,
+        agent: txt(v.agent) ?? null,
+        model_provider_id: txt(model?.providerID) ?? null,
+        model_id: txt(model?.modelID) ?? null,
+        time_created: num(time?.created) ?? num(v.time_created) ?? null,
+        time_updated: num(time?.updated) ?? num(v.time_updated) ?? null,
+      }
+    },
+    part(v: Record<string, unknown>, time?: number) {
+      const tokens = obj(v.tokens)
+      return {
+        id: txt(v.id) ?? "",
+        message_id: txt(v.messageID) ?? "",
+        session_id: txt(v.sessionID) ?? "",
+        part_type: txt(v.type) ?? null,
+        text: txt(v.text) ?? null,
+        model: txt(v.model) ?? txt(tokens?.model) ?? null,
+        input_tokens: num(tokens?.input) ?? null,
+        output_tokens: num(tokens?.output) ?? null,
+        cost: num(v.cost) ?? num(tokens?.cost) ?? null,
+        time_created: time ?? null,
+        time_updated: time ?? null,
+      }
+    },
+    async replayBus(_: unknown, evt: { type: string }, machine: string) {
+      if (fail) throw new Error("boom")
+      hit.replay.push({ evt, machine })
+    },
+    routeBus(evt: { type: string; properties: Record<string, unknown> }) {
+      if (evt.type === "session.created") {
+        const info = obj(evt.properties.info)
+        if (info) return { type: "session.created", info }
+        return
+      }
 
-const mod = await import("./index.js")
+      if (evt.type === "session.updated") {
+        const info = obj(evt.properties.info)
+        const sessionID = txt(evt.properties.sessionID)
+        if (info && sessionID) return { type: "session.updated", info, sessionID }
+        return
+      }
+
+      if (evt.type === "session.deleted") {
+        const sessionID = txt(evt.properties.sessionID) ?? txt(obj(evt.properties.info)?.id)
+        if (sessionID) return { type: "session.deleted", sessionID }
+        return
+      }
+
+      if (evt.type === "message.updated") {
+        const info = obj(evt.properties.info)
+        if (info) return { type: "message.updated", info }
+        return
+      }
+
+      if (evt.type === "message.removed") {
+        const messageID = txt(evt.properties.messageID)
+        if (messageID) return { type: "message.removed", messageID }
+        return
+      }
+
+      if (evt.type === "message.part.updated") {
+        const part = obj(evt.properties.part)
+        if (part) return { type: "message.part.updated", part, time: num(evt.properties.time) }
+        return
+      }
+
+      if (evt.type === "message.part.removed") {
+        const partID = txt(evt.properties.partID)
+        if (partID) return { type: "message.part.removed", partID }
+        return
+      }
+    },
+    session(v: Record<string, unknown>) {
+      const share = obj(v.share)
+      const time = obj(v.time)
+      return {
+        id: txt(v.id) ?? "",
+        project_id: txt(v.projectID) ?? "global",
+        workspace_id: txt(v.workspaceID) ?? null,
+        parent_id: txt(v.parentID) ?? null,
+        slug: txt(v.slug) ?? "",
+        directory: txt(v.directory) ?? "",
+        title: txt(v.title) ?? "",
+        version: txt(v.version) ?? "",
+        share_url: txt(share?.url) ?? txt(v.share_url) ?? null,
+        summary_additions: num(v.summary_additions) ?? null,
+        summary_deletions: num(v.summary_deletions) ?? null,
+        summary_files: num(v.summary_files) ?? null,
+        time_created: num(time?.created) ?? num(v.time_created) ?? null,
+        time_updated: num(time?.updated) ?? num(v.time_updated) ?? null,
+        time_compacting: num(v.time_compacting) ?? null,
+        time_archived: num(v.time_archived) ?? null,
+      }
+    },
+    async syncTodos(_: unknown, sid: string, todos: Array<{ content: string; status: string; priority: string }>) {
+      hit.todo.push({ sid, todos })
+    },
+  }))
+
+  mock.module("./local.js", () => ({
+    checkpointState() {
+      return {
+        safe: true,
+        checkpointTime: 123,
+        lastMessageID: "msg_1",
+      }
+    },
+    async pullSession(_: unknown, sid: string) {
+      hit.pull.push(sid)
+    },
+    async refreshCheckpoints() {
+      hit.fresh += 1
+    },
+    async remoteStatus() {
+      hit.remote += 1
+      return { ses_remote: { type: "idle" as const } }
+    },
+    async saveCheckpoint(
+      _: unknown,
+      input: { sessionID: string; machine: string; checkpointTime: number; lastMessageID: string | null },
+    ) {
+      hit.save.push(input)
+    },
+    async syncMetadata() {
+      hit.meta += 1
+    },
+  }))
+
+  mock.module("./log.js", () => ({
+    warn(...args: unknown[]) {
+      hit.warn.push(args)
+    },
+    info() {},
+  }))
+
+  mock.module("./tools.js", () => ({
+    tools() {
+      return "tool"
+    },
+  }))
+
+  const mod = await import(`./index.js?${Date.now()}-${Math.random()}`)
+  mock.restore()
+  return mod
+}
 
 const real = globalThis.setInterval
 
 beforeEach(() => {
+  hit.backfill.length = 0
   hit.replay.length = 0
   hit.todo.length = 0
   hit.pull.length = 0
@@ -116,7 +232,11 @@ afterEach(() => {
 
 describe("postgres sync plugin", () => {
   test("starts without the SSE consumer and primes metadata sync", async () => {
-    const hooks = (await mod.default.server({} as never, { machine: "m1", url: "postgres://db" } as never)) as Hooks
+    const mod = await load()
+    const hooks = (await mod.default.server(
+      {} as never,
+      { machine: "m1", url: "postgres://db", db: "/tmp/opencode.db", backfill: -1 } as never,
+    )) as Hooks
 
     await Promise.resolve()
 
@@ -125,10 +245,32 @@ describe("postgres sync plugin", () => {
     expect(hit.fresh).toBe(1)
     expect(hit.tick).toEqual([30000])
     expect(hit.unref).toBe(1)
+    expect(hit.backfill).toEqual([{ machine: "m1", file: "/tmp/opencode.db", maxDays: -1 }])
+    expect(hit.warn).toHaveLength(0)
+  })
+
+  test("skips backfill when db is missing or backfill is zero", async () => {
+    const mod = await load()
+    await (mod.default.server(
+      {} as never,
+      { machine: "m1", url: "postgres://db", backfill: -1 } as never,
+    ) as Promise<Hooks>)
+    await Promise.resolve()
+    expect(hit.backfill).toEqual([])
+    expect(String(hit.warn[0]?.[0])).toContain("no sqlite db configured")
+
+    hit.warn.length = 0
+    await (mod.default.server(
+      {} as never,
+      { machine: "m1", url: "postgres://db", db: "/tmp/opencode.db", backfill: 0 } as never,
+    ) as Promise<Hooks>)
+    await Promise.resolve()
+    expect(hit.backfill).toEqual([])
     expect(hit.warn).toHaveLength(0)
   })
 
   test("routes bus events and inlines sync helpers", async () => {
+    const mod = await load()
     const hooks = (await mod.default.server({} as never, { machine: "m1", url: "postgres://db" } as never)) as Hooks
 
     await hooks.event?.({
@@ -179,7 +321,11 @@ describe("postgres sync plugin", () => {
   })
 
   test("logs replay failures without crashing the host", async () => {
-    const hooks = (await mod.default.server({} as never, { machine: "m1", url: "postgres://db" } as never)) as Hooks
+    const mod = await load()
+    const hooks = (await mod.default.server(
+      {} as never,
+      { machine: "m1", url: "postgres://db", db: "/tmp/opencode.db", backfill: -1 } as never,
+    )) as Hooks
     fail = true
 
     await hooks.event?.({

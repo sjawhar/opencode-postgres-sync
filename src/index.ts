@@ -76,6 +76,8 @@ const plugin: Plugin = async (_, options) => {
   }
 
   const machine = (options?.machine as string) ?? os.hostname()
+  const file = options?.db as string | undefined
+  const maxDays = typeof options?.backfill === "number" ? (options.backfill as number) : -1
 
   let sql: ReturnType<typeof postgres>
   try {
@@ -132,7 +134,14 @@ const plugin: Plugin = async (_, options) => {
     }
   }
 
-  void backfill(sql, machine)
+  if (!file) {
+    warn("no sqlite db configured (set options.db), skipping backfill")
+  }
+
+  if (file && maxDays !== 0) {
+    void backfill(sql, machine, file, maxDays)
+  }
+
   void sync()
   const timer = setInterval(() => {
     void sync()
