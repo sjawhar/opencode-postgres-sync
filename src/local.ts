@@ -72,34 +72,27 @@ function sessionDir() {
   return dir
 }
 
-function ensureSessionTable(db: SQLite) {
-  const cols = db.query("PRAGMA table_info(session)").all() as Array<{ name: string }>
-  if (!cols.some((item) => item.name === "origin_machine")) {
-    db.exec("ALTER TABLE session ADD COLUMN origin_machine TEXT")
-  }
-}
-
 function ensureShard(db: SQLite) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS message (
+  for (const stmt of [
+    `CREATE TABLE IF NOT EXISTS message (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
       time_created INTEGER,
       time_updated INTEGER,
       data TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS message_session_time_created_id_idx ON message (session_id, time_created, id);
-    CREATE TABLE IF NOT EXISTS part (
+    )`,
+    `CREATE INDEX IF NOT EXISTS message_session_time_created_id_idx ON message (session_id, time_created, id)`,
+    `CREATE TABLE IF NOT EXISTS part (
       id TEXT PRIMARY KEY,
       message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
       session_id TEXT NOT NULL,
       time_created INTEGER,
       time_updated INTEGER,
       data TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS part_message_id_id_idx ON part (message_id, id);
-    CREATE INDEX IF NOT EXISTS part_session_idx ON part (session_id);
-    CREATE TABLE IF NOT EXISTS todo (
+    )`,
+    `CREATE INDEX IF NOT EXISTS part_message_id_id_idx ON part (message_id, id)`,
+    `CREATE INDEX IF NOT EXISTS part_session_idx ON part (session_id)`,
+    `CREATE TABLE IF NOT EXISTS todo (
       session_id TEXT NOT NULL,
       content TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -108,36 +101,90 @@ function ensureShard(db: SQLite) {
       time_created INTEGER,
       time_updated INTEGER,
       PRIMARY KEY (session_id, position)
-    );
-    CREATE INDEX IF NOT EXISTS todo_session_idx ON todo (session_id);
-    CREATE TABLE IF NOT EXISTS event_sequence (
+    )`,
+    `CREATE INDEX IF NOT EXISTS todo_session_idx ON todo (session_id)`,
+    `CREATE TABLE IF NOT EXISTS event_sequence (
       aggregate_id TEXT NOT NULL PRIMARY KEY,
       seq INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS event (
+    )`,
+    `CREATE TABLE IF NOT EXISTS event (
       id TEXT PRIMARY KEY,
       aggregate_id TEXT NOT NULL REFERENCES event_sequence(aggregate_id) ON DELETE CASCADE,
       seq INTEGER NOT NULL,
       type TEXT NOT NULL,
       data TEXT NOT NULL,
       origin TEXT
-    );
-  `)
+    )`,
+  ]) {
+    db.query(stmt).run()
+  }
 }
 
-export async function syncMetadata(sql: Db, machine: string) {
+async function remoteRoot(sql: Db, id: string) {
+  const rows = await sql<Array<{ id: string }>>`
+    WITH RECURSIVE tree AS (
+      SELECT id, parent_id
+      FROM session
+      WHERE id = ${id}
+      UNION ALL
+      SELECT s.id, s.parent_id
+      FROM session s
+      JOIN tree t ON t.parent_id = s.id
+    )
+    SELECT id
+    FROM tree
+    WHERE parent_id IS NULL
+    LIMIT 1
+  `
+  return rows[0]?.id ?? null
+}
+
+function localRoot(db: SQLite, id: string) {
+  const row = db
+    .query(
+      `WITH RECURSIVE tree AS (
+      SELECT id, parent_id
+      FROM session
+      WHERE id = ?
+      UNION ALL
+      SELECT s.id, s.parent_id
+      FROM session s
+      JOIN tree t ON t.parent_id = s.id
+    )
+    SELECT id
+    FROM tree
+    WHERE parent_id IS NULL
+    LIMIT 1`,
+    )
+    .get(id) as { id: string } | null
+  return row?.id ?? id
+}
+
+function localIDs() {
+  const db = new SQLite(globalDb(), { create: true })
+  try {
+    const row = db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session' LIMIT 1").get() as {
+      name: string
+    } | null
+    if (!row) return new Set<string>()
+    return new Set((db.query("SELECT id FROM session").all() as Array<{ id: string }>).map((item) => item.id))
+  } finally {
+    db.close()
+  }
+}
+
+export async function syncMetadata(sql: Db) {
   const file = globalDb()
   mkdirSync(path.dirname(file), { recursive: true })
   const db = new SQLite(file, { create: true })
   try {
-    ensureSessionTable(db)
+    const ids = localIDs()
     const rows = await sql<Array<Record<string, unknown>>>`
       SELECT
         s.id,
         s.project_id,
         s.workspace_id,
         s.parent_id,
-        s.root_session_id,
         s.slug,
         s.directory,
         s.title,
@@ -152,37 +199,20 @@ export async function syncMetadata(sql: Db, machine: string) {
         s.time_created,
         s.time_updated,
         s.time_compacting,
-        s.time_archived,
-        COALESCE(
-          s.origin_machine,
-          rc.machine,
-          e.origin->>'machine'
-        ) AS origin_machine
+        s.time_archived
       FROM session s
-      LEFT JOIN resumable_checkpoint rc ON rc.session_id = s.id
-      LEFT JOIN LATERAL (
-        SELECT origin
-        FROM event
-        WHERE aggregate_id = s.id AND type = 'session.created.1'
-        ORDER BY seq ASC
-        LIMIT 1
-      ) e ON true
-      WHERE COALESCE(s.origin_machine, rc.machine, e.origin->>'machine') IS NOT NULL
-        AND COALESCE(s.origin_machine, rc.machine, e.origin->>'machine') != ${machine}
     `
 
-    const select = db.query("SELECT origin_machine FROM session WHERE id = ?")
     const upsert = db.query(`
       INSERT INTO session (
-        id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url,
+        id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url,
         summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
-        time_created, time_updated, time_compacting, time_archived, origin_machine
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        time_created, time_updated, time_compacting, time_archived
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
         parent_id = excluded.parent_id,
-        root_session_id = excluded.root_session_id,
         slug = excluded.slug,
         directory = excluded.directory,
         title = excluded.title,
@@ -197,20 +227,15 @@ export async function syncMetadata(sql: Db, machine: string) {
         time_created = excluded.time_created,
         time_updated = excluded.time_updated,
         time_compacting = excluded.time_compacting,
-        time_archived = excluded.time_archived,
-        origin_machine = excluded.origin_machine
+        time_archived = excluded.time_archived
     `)
 
-    for (const row of rows) {
-      const current = select.get(txt(row.id) ?? "") as { origin_machine: string | null } | null
-      if (current && !current.origin_machine && !txt(row.origin_machine)) continue
-
+    for (const row of rows.filter((row) => !ids.has(txt(row.id) ?? ""))) {
       upsert.run(
         txt(row.id) ?? "",
         txt(row.project_id) ?? "",
         txt(row.workspace_id) ?? null,
         txt(row.parent_id) ?? null,
-        txt(row.root_session_id) ?? null,
         txt(row.slug) ?? "",
         txt(row.directory) ?? "",
         txt(row.title) ?? "",
@@ -226,7 +251,6 @@ export async function syncMetadata(sql: Db, machine: string) {
         num(row.time_updated) ?? 0,
         num(row.time_compacting) ?? null,
         num(row.time_archived) ?? null,
-        txt(row.origin_machine) ?? null,
       )
     }
   } finally {
@@ -237,12 +261,9 @@ export async function syncMetadata(sql: Db, machine: string) {
 export async function refreshCheckpoints(sql: Db, machine: string) {
   const db = new SQLite(globalDb(), { readonly: true })
   try {
-    ensureSessionTable(db)
-    const sessions = db
-      .query(
-        "SELECT id FROM session WHERE origin_machine IS NULL OR origin_machine = ? ORDER BY time_updated DESC LIMIT 200",
-      )
-      .all(machine) as Array<{ id: string }>
+    const sessions = db.query("SELECT id FROM session ORDER BY time_updated DESC LIMIT 200").all() as Array<{
+      id: string
+    }>
     for (const item of sessions) {
       const state = checkpointState(item.id)
       if (!state?.safe) continue
@@ -258,51 +279,63 @@ export async function refreshCheckpoints(sql: Db, machine: string) {
   }
 }
 
-export async function remoteStatus(sql: Db, machine: string) {
-  const db = new SQLite(globalDb(), { readonly: true })
-  try {
-    ensureSessionTable(db)
-    const sessions = db
-      .query(
-        "SELECT id, time_updated FROM session WHERE origin_machine IS NOT NULL AND origin_machine != ? ORDER BY id",
-      )
-      .all(machine) as Array<{ id: string; time_updated: number }>
-    if (!sessions.length) return {} as Record<string, { type: "idle" | "busy" }>
+export async function remoteStatus(sql: Db) {
+  const local = localIDs()
+  const sessions = (
+    await sql<Array<{ id: string; time_updated: number }>>`
+    SELECT id, time_updated
+    FROM session
+    ORDER BY id
+  `
+  ).filter((item) => !local.has(item.id))
+  if (!sessions.length) return {} as Record<string, { type: "idle" | "busy" }>
 
-    const ids = sessions.map((item) => item.id)
-    const marks = await sql<Array<{ session_id: string; checkpoint_time: number }>>`
-      SELECT session_id, checkpoint_time
-      FROM resumable_checkpoint
-      WHERE session_id IN ${sql(ids)}
-    `
-    const by = new Map(marks.map((item) => [item.session_id, item.checkpoint_time]))
-    return Object.fromEntries(
-      sessions.map((item) => [
-        item.id,
-        { type: by.has(item.id) && (by.get(item.id) ?? 0) >= item.time_updated ? "idle" : ("busy" as const) },
-      ]),
-    ) as Record<string, { type: "idle" | "busy" }>
-  } finally {
-    db.close()
-  }
+  const ids = sessions.map((item) => item.id)
+  const marks = await sql<Array<{ session_id: string; checkpoint_time: number }>>`
+    SELECT session_id, checkpoint_time
+    FROM resumable_checkpoint
+    WHERE session_id IN ${sql(ids)}
+  `
+  const by = new Map(marks.map((item) => [item.session_id, item.checkpoint_time]))
+  return Object.fromEntries(
+    sessions.map((item) => [
+      item.id,
+      { type: by.has(item.id) && (by.get(item.id) ?? 0) >= item.time_updated ? "idle" : ("busy" as const) },
+    ]),
+  ) as Record<string, { type: "idle" | "busy" }>
 }
 
 export async function pullSession(sql: Db, sessionID: string) {
   const meta = new SQLite(globalDb(), { create: true })
   try {
-    ensureSessionTable(meta)
-    const row = meta
-      .query("SELECT id, root_session_id, origin_machine FROM session WHERE id = ? LIMIT 1")
-      .get(sessionID) as { id: string; root_session_id: string | null; origin_machine: string | null } | null
-    if (!row?.origin_machine) return false
+    const row = await sql<Array<{ id: string }>>`
+      SELECT id
+      FROM session
+      WHERE id = ${sessionID}
+      LIMIT 1
+    `
+    if (!row[0]?.id) return false
 
-    const root = row.root_session_id ?? row.id
+    const rid = await remoteRoot(sql, sessionID)
+    const root = rid ?? sessionID
     const file = path.join(sessionDir(), `${root}.db`)
     const tmp = path.join(sessionDir(), `${root}.db.tmp`)
     const existed = existsSync(file)
 
     const sessions = await sql<Array<Record<string, unknown>>>`
-      SELECT * FROM session WHERE id = ${root} OR root_session_id = ${root} ORDER BY time_created, id
+      WITH RECURSIVE tree AS (
+        SELECT id
+        FROM session
+        WHERE id = ${root}
+        UNION ALL
+        SELECT s.id
+        FROM session s
+        JOIN tree t ON s.parent_id = t.id
+      )
+      SELECT *
+      FROM session
+      WHERE id IN (SELECT id FROM tree)
+      ORDER BY time_created, id
     `
     const ids = sessions.map((item) => txt(item.id)).filter((item): item is string => !!item)
     if (!ids.length) return false
@@ -328,15 +361,14 @@ export async function pullSession(sql: Db, sessionID: string) {
 
     const upsert = meta.query(`
       INSERT INTO session (
-        id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url,
+        id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url,
         summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
-        time_created, time_updated, time_compacting, time_archived, origin_machine
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        time_created, time_updated, time_compacting, time_archived
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
         parent_id = excluded.parent_id,
-        root_session_id = excluded.root_session_id,
         slug = excluded.slug,
         directory = excluded.directory,
         title = excluded.title,
@@ -351,8 +383,7 @@ export async function pullSession(sql: Db, sessionID: string) {
         time_created = excluded.time_created,
         time_updated = excluded.time_updated,
         time_compacting = excluded.time_compacting,
-        time_archived = excluded.time_archived,
-        origin_machine = excluded.origin_machine
+        time_archived = excluded.time_archived
     `)
     for (const item of sessions) {
       upsert.run(
@@ -360,7 +391,6 @@ export async function pullSession(sql: Db, sessionID: string) {
         txt(item.project_id) ?? "",
         txt(item.workspace_id) ?? null,
         txt(item.parent_id) ?? null,
-        txt(item.root_session_id) ?? null,
         txt(item.slug) ?? "",
         txt(item.directory) ?? "",
         txt(item.title) ?? "",
@@ -376,7 +406,6 @@ export async function pullSession(sql: Db, sessionID: string) {
         num(item.time_updated) ?? 0,
         num(item.time_compacting) ?? null,
         num(item.time_archived) ?? null,
-        txt(item.origin_machine) ?? null,
       )
     }
 
@@ -470,11 +499,7 @@ export async function saveCheckpoint(
 export function checkpointState(sessionID: string) {
   const db = new SQLite(globalDb(), { readonly: true })
   try {
-    ensureSessionTable(db)
-    const meta = db.query("SELECT root_session_id FROM session WHERE id = ? LIMIT 1").get(sessionID) as {
-      root_session_id: string | null
-    } | null
-    const root = meta?.root_session_id ?? sessionID
+    const root = localRoot(db, sessionID)
     const file = path.join(sessionDir(), `${root}.db`)
     if (!existsSync(file)) return null
 

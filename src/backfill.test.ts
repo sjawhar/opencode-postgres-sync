@@ -164,14 +164,14 @@ function seed(file: string, now: number) {
     CREATE TABLE account (id TEXT, email TEXT, url TEXT, access_token TEXT, refresh_token TEXT, token_expiry INTEGER, time_created INTEGER, time_updated INTEGER);
     CREATE TABLE account_state (id INTEGER, active_account_id TEXT, active_org_id TEXT);
     CREATE TABLE control_account (email TEXT, url TEXT, access_token TEXT, refresh_token TEXT, token_expiry INTEGER, active INTEGER, time_created INTEGER, time_updated INTEGER);
-    CREATE TABLE session (id TEXT, project_id TEXT, workspace_id TEXT, parent_id TEXT, root_session_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, share_url TEXT, summary_additions INTEGER, summary_deletions INTEGER, summary_files INTEGER, summary_diffs TEXT, revert TEXT, permission TEXT, time_created INTEGER, time_updated INTEGER, time_compacting INTEGER, time_archived INTEGER);
+    CREATE TABLE session (id TEXT, project_id TEXT, workspace_id TEXT, parent_id TEXT, slug TEXT, directory TEXT, title TEXT, version TEXT, share_url TEXT, summary_additions INTEGER, summary_deletions INTEGER, summary_files INTEGER, summary_diffs TEXT, revert TEXT, permission TEXT, time_created INTEGER, time_updated INTEGER, time_compacting INTEGER, time_archived INTEGER);
     CREATE TABLE session_share (session_id TEXT, id TEXT, secret TEXT, url TEXT, time_created INTEGER, time_updated INTEGER);
     CREATE TABLE permission (project_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
     CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
     CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
     CREATE TABLE todo (session_id TEXT, position INTEGER, content TEXT, status TEXT, priority TEXT, time_updated INTEGER);
     CREATE TABLE event_sequence (aggregate_id TEXT, seq INTEGER);
-    CREATE TABLE event (id TEXT, aggregate_id TEXT, seq INTEGER, type TEXT, data TEXT, origin TEXT);
+    CREATE TABLE event (id TEXT, aggregate_id TEXT, seq INTEGER, type TEXT, data TEXT);
   `)
 
   db.prepare("INSERT INTO project VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
@@ -201,10 +201,9 @@ function seed(file: string, now: number) {
     null,
   )
 
-  db.prepare("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     "ses_old",
     "p_good",
-    null,
     null,
     null,
     "old",
@@ -223,10 +222,9 @@ function seed(file: string, now: number) {
     null,
     null,
   )
-  db.prepare("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     "ses_new",
     "p_good",
-    null,
     null,
     null,
     "new",
@@ -280,22 +278,8 @@ function seed(file: string, now: number) {
   db.prepare("INSERT INTO todo VALUES (?, ?, ?, ?, ?, ?)").run("ses_new", 0, "new", "done", "high", now - 2 * 86400000)
   db.prepare("INSERT INTO event_sequence VALUES (?, ?)").run("ses_old", 1)
   db.prepare("INSERT INTO event_sequence VALUES (?, ?)").run("ses_new", 2)
-  db.prepare("INSERT INTO event VALUES (?, ?, ?, ?, ?, ?)").run(
-    "evt_old",
-    "ses_old",
-    1,
-    "message.updated.1",
-    "{}",
-    '{"machine":"m2"}',
-  )
-  db.prepare("INSERT INTO event VALUES (?, ?, ?, ?, ?, ?)").run(
-    "evt_new",
-    "ses_new",
-    2,
-    "message.updated.1",
-    "{}",
-    '{"machine":"m3"}',
-  )
+  db.prepare("INSERT INTO event VALUES (?, ?, ?, ?, ?)").run("evt_old", "ses_old", 1, "message.updated.1", "{}")
+  db.prepare("INSERT INTO event VALUES (?, ?, ?, ?, ?)").run("evt_new", "ses_new", 2, "message.updated.1", "{}")
   db.close()
 }
 
@@ -359,6 +343,7 @@ describe("backfill", () => {
     await mod.backfill(db as never, "m1", tmp.file, 7)
 
     expect(db.out.get("session")?.map((row) => row.id)).toEqual(["ses_new"])
+    expect(db.out.get("session")?.every((row) => !("origin_machine" in row))).toBe(true)
     expect(db.out.get("message")?.map((row) => row.id)).toEqual(["msg_new"])
     expect(db.out.get("part")?.map((row) => row.id)).toEqual(["part_new"])
     expect(db.out.get("event_sequence")?.map((row) => row.aggregate_id)).toEqual(["ses_new"])

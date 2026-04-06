@@ -10,7 +10,7 @@ type Hooks = {
 const sql = {} as never
 const hit = {
   backfill: [] as Array<{ machine: string; file: string; maxDays: number }>,
-  replay: [] as Array<{ evt: { type: string }; machine: string }>,
+  replay: [] as Array<{ evt: { type: string }; argc: number }>,
   todo: [] as Array<{ sid: string; todos: Array<{ content: string; status: string; priority: string }> }>,
   pull: [] as string[],
   save: [] as Array<{ sessionID: string; machine: string; checkpointTime: number; lastMessageID: string | null }>,
@@ -79,9 +79,9 @@ async function load() {
         time_updated: time ?? null,
       }
     },
-    async replayBus(_: unknown, evt: { type: string }, machine: string) {
+    async replayBus(...args: [unknown, { type: string }] | [unknown, { type: string }, string]) {
       if (fail) throw new Error("boom")
-      hit.replay.push({ evt, machine })
+      hit.replay.push({ evt: args[1], argc: args.length })
     },
     routeBus(evt: { type: string; properties: Record<string, unknown> }) {
       if (evt.type === "session.created") {
@@ -298,7 +298,7 @@ describe("postgres sync plugin", () => {
     await hooks["session.ensure.before"]?.({ mode: "get", sessionID: "ses_1" }, {})
 
     expect(hit.replay.map((item) => item.evt.type)).toEqual(["message.updated", "todo.updated", "session.status"])
-    expect(hit.replay.map((item) => item.machine)).toEqual(["m1", "m1", "m1"])
+    expect(hit.replay.map((item) => item.argc)).toEqual([2, 2, 2])
     expect(hit.todo).toEqual([
       {
         sid: "ses_1",

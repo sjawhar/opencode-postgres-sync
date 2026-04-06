@@ -23,7 +23,6 @@ export function tools(sql: Db) {
             {
               id: string
               title: string
-              machine: string
               excerpt: string
               time: string
             }[]
@@ -31,7 +30,6 @@ export function tools(sql: Db) {
             SELECT DISTINCT ON (s.id)
               s.id,
               s.title,
-              COALESCE(s.origin_machine, 'unknown') as machine,
               COALESCE(
                 left(p.text, 200),
                 left(s.title, 200)

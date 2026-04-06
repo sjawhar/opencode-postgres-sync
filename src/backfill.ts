@@ -13,7 +13,6 @@ type EventRow = {
   seq: number
   type: string
   data: string | Record<string, unknown>
-  origin: string | Record<string, unknown> | null
 }
 
 type TodoRow = {
@@ -231,34 +230,16 @@ async function copySessions(sql: Db, db: SQLite, maxDays: number) {
     cut == null
       ? db
           .query(
-            "SELECT id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session ORDER BY time_created, id",
+            "SELECT id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session ORDER BY time_created, id",
           )
           .all()
       : db
           .query(
-            "SELECT id, project_id, workspace_id, parent_id, root_session_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session WHERE time_created >= ? ORDER BY time_created, id",
+            "SELECT id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived FROM session WHERE time_created >= ? ORDER BY time_created, id",
           )
           .all(cut)
   ) as Array<Record<string, unknown>>
   if (!rows.length) return new Set<string>()
-
-  const map = new Map(rows.map((row) => [txt(row.id) ?? "", row]))
-  const memo = new Map<string, string>()
-  const resolve = (id: string): string => {
-    const hit = memo.get(id)
-    if (hit) return hit
-    const row = map.get(id)
-    if (!row) return id
-    const root_session_id = txt(row.root_session_id)
-    if (root_session_id) {
-      memo.set(id, root_session_id)
-      return root_session_id
-    }
-    const parent_id = txt(row.parent_id)
-    const next = parent_id ? resolve(parent_id) : id
-    memo.set(id, next)
-    return next
-  }
 
   const values = rows.map((row) => {
     const diffs = pack(row.summary_diffs ?? null)
@@ -271,7 +252,6 @@ async function copySessions(sql: Db, db: SQLite, maxDays: number) {
       project_id: txt(row.project_id) ?? "global",
       workspace_id: txt(row.workspace_id) ?? null,
       parent_id: txt(row.parent_id) ?? null,
-      root_session_id: resolve(id),
       slug: txt(row.slug) ?? "",
       directory: txt(row.directory) ?? "",
       title: txt(row.title) ?? "",
@@ -292,13 +272,12 @@ async function copySessions(sql: Db, db: SQLite, maxDays: number) {
       time_archived: num(row.time_archived) ?? null,
       data: data.json,
       data_raw: data.raw,
-      origin_machine: null,
     }
   })
 
   await sql.begin(async (tx) => {
     const db = run(tx)
-    await db`INSERT INTO session ${db(values, ["id", "project_id", "workspace_id", "parent_id", "root_session_id", "slug", "directory", "title", "version", "share_url", "summary_additions", "summary_deletions", "summary_files", "summary_diffs", "summary_diffs_raw", "revert", "revert_raw", "permission", "permission_raw", "time_created", "time_updated", "time_compacting", "time_archived", "data", "data_raw", "origin_machine"])} ON CONFLICT (id) DO NOTHING`
+    await db`INSERT INTO session ${db(values, ["id", "project_id", "workspace_id", "parent_id", "slug", "directory", "title", "version", "share_url", "summary_additions", "summary_deletions", "summary_files", "summary_diffs", "summary_diffs_raw", "revert", "revert_raw", "permission", "permission_raw", "time_created", "time_updated", "time_compacting", "time_archived", "data", "data_raw"])} ON CONFLICT (id) DO NOTHING`
   })
 
   return new Set(values.map((row) => row.id))
@@ -475,15 +454,12 @@ async function copyEventSequence(sql: Db, db: SQLite, ids?: Set<string>) {
 }
 
 async function copyEvents(sql: Db, db: SQLite, ids?: Set<string>) {
-  const rows = db
-    .query<EventRow, []>("SELECT id, aggregate_id, seq, type, data, origin FROM event ORDER BY rowid ASC")
-    .all()
+  const rows = db.query<EventRow, []>("SELECT id, aggregate_id, seq, type, data FROM event ORDER BY rowid ASC").all()
   const list = keep(rows, ids, "aggregate_id") as EventRow[]
   if (!list.length) return [] as EventRow[]
 
   const values = list.map((row) => {
     const data = pack(row.data)
-    const origin = pack(row.origin ?? null)
     return {
       id: row.id,
       aggregate_id: row.aggregate_id,
@@ -491,14 +467,12 @@ async function copyEvents(sql: Db, db: SQLite, ids?: Set<string>) {
       type: row.type,
       data: data.json,
       data_raw: data.raw,
-      origin: origin.json,
-      origin_raw: row.origin == null ? null : origin.raw,
     }
   })
 
   await sql.begin(async (tx) => {
     const db = run(tx)
-    await db`INSERT INTO event ${db(values, ["id", "aggregate_id", "seq", "type", "data", "data_raw", "origin", "origin_raw"])} ON CONFLICT (id) DO NOTHING`
+    await db`INSERT INTO event ${db(values, ["id", "aggregate_id", "seq", "type", "data", "data_raw"])} ON CONFLICT (id) DO NOTHING`
   })
 
   return list
@@ -507,9 +481,7 @@ async function copyEvents(sql: Db, db: SQLite, ids?: Set<string>) {
 async function checkpoint(sql: Db, sid: string, rows: EventRow[], machine: string) {
   const last = rows.at(-1)
   if (!last) return
-  const info = typeof last.origin === "string" ? JSON.parse(sanitize(last.origin)) : last.origin
-  const mid = txt(obj(info)?.machine) ?? machine
-  await save(sql, mid, sid, last.id, last.seq)
+  await save(sql, machine, sid, last.id, last.seq)
 }
 
 export async function backfill(sql: Db, machine: string, file: string, maxDays: number) {

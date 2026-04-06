@@ -62,7 +62,6 @@ export const ddl = [
     project_id TEXT NOT NULL,
     workspace_id TEXT,
     parent_id TEXT,
-    root_session_id TEXT,
     slug TEXT NOT NULL,
     directory TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -83,7 +82,6 @@ export const ddl = [
     time_archived BIGINT,
     data JSONB,
     data_raw BYTEA NOT NULL,
-    origin_machine TEXT,
     FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE,
     FOREIGN KEY (workspace_id) REFERENCES workspace(id) ON DELETE SET NULL
   )`,
@@ -156,8 +154,6 @@ export const ddl = [
     type TEXT NOT NULL,
     data JSONB,
     data_raw BYTEA NOT NULL,
-    origin JSONB,
-    origin_raw BYTEA
   )`,
   `CREATE TABLE IF NOT EXISTS replication_state (
     source_machine TEXT NOT NULL,
@@ -178,7 +174,6 @@ export const ddl = [
   `CREATE INDEX IF NOT EXISTS idx_workspace_project ON workspace(project_id)`,
   `CREATE INDEX IF NOT EXISTS idx_session_project ON session(project_id)`,
   `CREATE INDEX IF NOT EXISTS idx_session_parent ON session(parent_id)`,
-  `CREATE INDEX IF NOT EXISTS idx_session_root ON session(root_session_id)`,
   `CREATE INDEX IF NOT EXISTS idx_session_workspace ON session(workspace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_message_session ON message(session_id)`,
   `CREATE INDEX IF NOT EXISTS idx_part_session ON part(session_id)`,

@@ -95,7 +95,7 @@ const plugin: Plugin = async (_, options) => {
 
   const sync = async () => {
     try {
-      await syncMetadata(sql, machine)
+      await syncMetadata(sql)
       await refreshCheckpoints(sql, machine)
     } catch (err) {
       warn("metadata sync failed", err)
@@ -112,7 +112,7 @@ const plugin: Plugin = async (_, options) => {
 
   const status = async () => {
     try {
-      return await remoteStatus(sql, machine)
+      return await remoteStatus(sql)
     } catch (err) {
       warn("remote status failed", err)
       return {}
@@ -151,7 +151,7 @@ const plugin: Plugin = async (_, options) => {
   const hooks: Phase55Hooks = {
     event: async ({ event }) => {
       try {
-        await replayBus(sql, event, machine)
+        await replayBus(sql, event)
       } catch (err) {
         warn("replay failed", err)
       }

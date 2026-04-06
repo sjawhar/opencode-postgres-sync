@@ -189,17 +189,6 @@ async function ensureProject(sql: Db, id: string) {
   `
 }
 
-async function root(sql: Db, parent: string | null, id: string) {
-  if (!parent) return id
-  const rows = await sql<{ root_session_id: string | null }[]>`
-    SELECT COALESCE(root_session_id, id) AS root_session_id
-    FROM session
-    WHERE id = ${parent}
-    LIMIT 1
-  `
-  return rows[0]?.root_session_id ?? parent
-}
-
 async function ensureSession(sql: Db, id: string, time?: number | null) {
   await ensureProject(sql, "global")
   const data = pack({ id })
@@ -209,7 +198,6 @@ async function ensureSession(sql: Db, id: string, time?: number | null) {
       project_id,
       workspace_id,
       parent_id,
-      root_session_id,
       slug,
       directory,
       title,
@@ -229,14 +217,12 @@ async function ensureSession(sql: Db, id: string, time?: number | null) {
       time_compacting,
       time_archived,
       data,
-      data_raw,
-      origin_machine
+      data_raw
     ) VALUES (
       ${id},
       ${"global"},
       ${null},
       ${null},
-      ${id},
       ${id},
       ${""},
       ${id},
@@ -256,19 +242,17 @@ async function ensureSession(sql: Db, id: string, time?: number | null) {
       ${null},
       ${null},
       ${json(sql, data.json)},
-      ${data.raw},
-      ${null}
+      ${data.raw}
     ) ON CONFLICT (id) DO NOTHING
   `
 }
 
-async function replaySession(sql: Db, info: Obj, machine?: string | null) {
+async function replaySession(sql: Db, info: Obj) {
   const row = session(info)
   const meta = pack(info)
   const diffs = pack(info.summary_diffs ?? null)
   const revert = pack(info.revert ?? null)
   const permission = pack(info.permission ?? null)
-  const root_id = await root(sql, row.parent_id, row.id)
 
   await ensureProject(sql, row.project_id)
 
@@ -278,7 +262,6 @@ async function replaySession(sql: Db, info: Obj, machine?: string | null) {
       project_id,
       workspace_id,
       parent_id,
-      root_session_id,
       slug,
       directory,
       title,
@@ -298,14 +281,12 @@ async function replaySession(sql: Db, info: Obj, machine?: string | null) {
       time_compacting,
       time_archived,
       data,
-      data_raw,
-      origin_machine
+      data_raw
     ) VALUES (
       ${row.id},
       ${row.project_id},
       ${row.workspace_id},
       ${row.parent_id},
-      ${root_id},
       ${row.slug},
       ${row.directory},
       ${row.title},
@@ -325,14 +306,12 @@ async function replaySession(sql: Db, info: Obj, machine?: string | null) {
       ${row.time_compacting},
       ${row.time_archived},
       ${json(sql, meta.json)},
-      ${meta.raw},
-      ${machine ?? null}
+      ${meta.raw}
     )
     ON CONFLICT (id) DO UPDATE SET
       project_id = EXCLUDED.project_id,
       workspace_id = EXCLUDED.workspace_id,
       parent_id = EXCLUDED.parent_id,
-      root_session_id = EXCLUDED.root_session_id,
       slug = EXCLUDED.slug,
       directory = EXCLUDED.directory,
       title = EXCLUDED.title,
@@ -352,12 +331,11 @@ async function replaySession(sql: Db, info: Obj, machine?: string | null) {
       time_compacting = EXCLUDED.time_compacting,
       time_archived = EXCLUDED.time_archived,
       data = EXCLUDED.data,
-      data_raw = EXCLUDED.data_raw,
-      origin_machine = EXCLUDED.origin_machine
+      data_raw = EXCLUDED.data_raw
   `
 }
 
-async function updateSession(sql: Db, sid: string, info: Obj, machine?: string | null) {
+async function updateSession(sql: Db, sid: string, info: Obj) {
   if (!info || !sid) return
 
   const meta = pack(info)
@@ -368,16 +346,9 @@ async function updateSession(sql: Db, sid: string, info: Obj, machine?: string |
   await sql`
     UPDATE session
     SET data = COALESCE(${json(sql, meta.json)}, data),
-        data_raw = ${meta.raw},
-        origin_machine = coalesce(${machine ?? null}, origin_machine)
+        data_raw = ${meta.raw}
     WHERE id = ${sid}
   `
-
-  if ("parentID" in info) {
-    const parent_id = txt(info.parentID) ?? null
-    const root_id = await root(sql, parent_id, sid)
-    row.root_session_id = root_id
-  }
 
   if (!Object.keys(row).length) return
 
@@ -526,19 +497,19 @@ export function routeBus(evt: Bus): BusRoute | undefined {
   }
 }
 
-export async function replayBus(sql: Db, evt: Bus, machine: string) {
+export async function replayBus(sql: Db, evt: Bus) {
   return sql.begin(async (tx) => {
     const db = run(tx)
     const next = routeBus(evt)
     if (!next) return true
 
     if (next.type === "session.created") {
-      await replaySession(db, next.info, machine)
+      await replaySession(db, next.info)
       return true
     }
 
     if (next.type === "session.updated") {
-      await replaySession(db, next.info, machine)
+      await replaySession(db, next.info)
       return true
     }
 
@@ -575,9 +546,8 @@ export async function replay(sql: Db, evt: Sync) {
   return sql.begin(async (tx) => {
     const db = run(tx)
     const data = pack(evt.data)
-    const origin = pack(evt.origin ?? null)
     const seen = await db`
-      INSERT INTO event (id, aggregate_id, seq, type, data, data_raw, origin, origin_raw)
+      INSERT INTO event (id, aggregate_id, seq, type, data, data_raw)
       VALUES (
         ${evt.id},
         ${evt.aggregateID},
@@ -585,8 +555,7 @@ export async function replay(sql: Db, evt: Sync) {
         ${evt.type},
         ${json(db, data.json)},
         ${data.raw},
-        ${json(db, origin.json)},
-        ${evt.origin ? origin.raw : null}
+        ${data.raw}
       )
       ON CONFLICT (id) DO NOTHING
       RETURNING id
@@ -595,13 +564,13 @@ export async function replay(sql: Db, evt: Sync) {
 
     if (evt.type === "session.created.1") {
       const info = obj(evt.data.info)
-      if (info) await replaySession(db, info, txt(obj(evt.origin)?.machine) ?? null)
+      if (info) await replaySession(db, info)
       return true
     }
     if (evt.type === "session.updated.1") {
       const info = obj(evt.data.info)
       const sid = txt(evt.data.sessionID)
-      if (info && sid) await updateSession(db, sid, info, txt(obj(evt.origin)?.machine) ?? null)
+      if (info && sid) await updateSession(db, sid, info)
       return true
     }
     if (evt.type === "session.deleted.1") {
