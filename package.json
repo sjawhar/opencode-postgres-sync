@@ -1,14 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "opencode-postgres-sync",
-  "version": "0.0.1",
-  "private": true,
+  "name": "@sjawhar/opencode-postgres-sync",
+  "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
   "scripts": {
     "format": "bunx prettier --check .",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "prepublishOnly": "bun run build",
     "test": "bun test"
   },
   "dependencies": {
