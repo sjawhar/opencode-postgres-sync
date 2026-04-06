@@ -406,6 +406,14 @@ async function upsertPart(sql: Db, item: Obj, time?: number) {
   const meta = pack(item)
 
   await ensureSession(sql, row.session_id, row.time_created)
+  if (row.message_id) {
+    const stub = pack({ id: row.message_id })
+    await sql`
+      INSERT INTO message (id, session_id, time_created, time_updated, data, data_raw)
+      VALUES (${row.message_id}, ${row.session_id}, ${row.time_created}, ${row.time_created}, ${json(sql, stub.json)}, ${stub.raw})
+      ON CONFLICT (id) DO NOTHING
+    `
+  }
 
   await sql`
     INSERT INTO part (

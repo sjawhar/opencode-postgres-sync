@@ -15,6 +15,22 @@ import { tools } from "./tools.js"
 import { replayBus, syncTodos, type Todo } from "./projectors.js"
 import { backfill } from "./backfill.js"
 
+const pools = new Map<string, ReturnType<typeof postgres>>()
+
+function pool(url: string) {
+  const hit = pools.get(url)
+  if (hit) return hit
+  const sql = postgres(url, {
+    connect_timeout: 5,
+    max: 3,
+    onclose() {
+      warn("postgres connection closed")
+    },
+  })
+  pools.set(url, sql)
+  return sql
+}
+
 type TodoEvent = {
   type: "todo.updated"
   properties: {
@@ -82,13 +98,7 @@ const plugin: Plugin = async (_, options) => {
 
   let sql: ReturnType<typeof postgres>
   try {
-    sql = postgres(url, {
-      connect_timeout: 5,
-      max: 1,
-      onclose() {
-        warn("postgres connection closed")
-      },
-    })
+    sql = pool(url)
   } catch (err) {
     warn("failed to create postgres connection, skipping", err)
     return {}
