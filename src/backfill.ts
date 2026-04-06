@@ -5,6 +5,12 @@ import type { Db, Tx } from "./schema.js"
 import { syncTodos } from "./projectors.js"
 import { fresh, save } from "./replication.js"
 
+function open(path: string, opts?: { readonly?: boolean, create?: boolean }) {
+  const db = new SQLite(path, opts)
+  db.exec("PRAGMA busy_timeout = 5000")
+  return db
+}
+
 type Obj = Record<string, unknown>
 
 type EventRow = {
@@ -492,7 +498,7 @@ export async function backfill(sql: Db, machine: string, file: string, maxDays: 
 
   if (initial) {
     if (file && existsSync(file)) {
-      const db = new SQLite(file, { readonly: true })
+      const db = open(file, { readonly: true })
       try {
         await copyProjects(sql, db)
         await copyWorkspaces(sql, db)
@@ -522,7 +528,7 @@ export async function backfill(sql: Db, machine: string, file: string, maxDays: 
   for (const file of files) {
     const sid = file.slice(0, -3)
     if (ids && !ids.has(sid)) continue
-    const db = new SQLite(path.join(root, file), { readonly: true })
+    const db = open(path.join(root, file), { readonly: true })
     try {
       await copyMessages(sql, db, ids)
       await copyParts(sql, db, ids)

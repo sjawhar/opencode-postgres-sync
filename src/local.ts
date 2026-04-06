@@ -9,6 +9,12 @@ type Obj = Record<string, unknown>
 
 const dec = new TextDecoder()
 
+function open(path: string, opts?: { readonly?: boolean, create?: boolean }) {
+  const db = new SQLite(path, opts)
+  db.exec("PRAGMA busy_timeout = 5000")
+  return db
+}
+
 function txt(v: unknown) {
   return typeof v === "string" ? v : undefined
 }
@@ -176,7 +182,7 @@ function localIDs() {
 export async function syncMetadata(sql: Db) {
   const file = globalDb()
   mkdirSync(path.dirname(file), { recursive: true })
-  const db = new SQLite(file, { create: true })
+  const db = open(file, { create: true })
   try {
     const ids = localIDs()
     const rows = await sql<Array<Record<string, unknown>>>`
@@ -409,7 +415,7 @@ export async function pullSession(sql: Db, sessionID: string) {
       )
     }
 
-    const shard = new SQLite(existed ? file : tmp, { create: true })
+    const shard = open(existed ? file : tmp, { create: true })
     try {
       ensureShard(shard)
       const msgInsert = shard.query(
@@ -503,7 +509,7 @@ export function checkpointState(sessionID: string) {
     const file = path.join(sessionDir(), `${root}.db`)
     if (!existsSync(file)) return null
 
-    const shard = new SQLite(file, { readonly: true })
+    const shard = open(file, { readonly: true })
     try {
       const msg = shard
         .query("SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created DESC, id DESC LIMIT 1")
