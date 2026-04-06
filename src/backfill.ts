@@ -5,7 +5,7 @@ import type { Db, Tx } from "./schema.js"
 import { syncTodos } from "./projectors.js"
 import { fresh, save } from "./replication.js"
 
-function open(path: string, opts?: { readonly?: boolean, create?: boolean }) {
+function open(path: string, opts?: { readonly?: boolean; create?: boolean }) {
   const db = new SQLite(path, opts)
   db.exec("PRAGMA busy_timeout = 5000")
   return db

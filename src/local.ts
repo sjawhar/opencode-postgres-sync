@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, unlinkSync } from "node:fs"
+import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import { Database as SQLite } from "bun:sqlite"
@@ -9,7 +9,7 @@ type Obj = Record<string, unknown>
 
 const dec = new TextDecoder()
 
-function open(path: string, opts?: { readonly?: boolean, create?: boolean }) {
+function open(path: string, opts?: { readonly?: boolean; create?: boolean }) {
   const db = new SQLite(path, opts)
   db.exec("PRAGMA busy_timeout = 5000")
   return db
@@ -50,7 +50,6 @@ function home() {
 function data() {
   return path.join(process.env.XDG_DATA_HOME || path.join(home(), ".local", "share"), "opencode")
 }
-
 
 function sessionDir() {
   const dir = path.join(data(), "sessions")
@@ -169,6 +168,7 @@ export async function syncMetadata(sql: Db, db: string) {
         s.id,
         s.project_id,
         s.workspace_id,
+        s.origin_machine,
         s.parent_id,
         s.slug,
         s.directory,
@@ -186,17 +186,20 @@ export async function syncMetadata(sql: Db, db: string) {
         s.time_compacting,
         s.time_archived
       FROM session s
+      ORDER BY s.time_updated DESC
+      LIMIT 5000
     `
 
     const upsert = file.query(`
       INSERT INTO session (
-        id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url,
+        id, project_id, workspace_id, origin_machine, parent_id, slug, directory, title, version, share_url,
         summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
         time_created, time_updated, time_compacting, time_archived
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
+        origin_machine = excluded.origin_machine,
         parent_id = excluded.parent_id,
         slug = excluded.slug,
         directory = excluded.directory,
@@ -215,11 +218,14 @@ export async function syncMetadata(sql: Db, db: string) {
         time_archived = excluded.time_archived
     `)
 
-    for (const row of rows.filter((row) => !ids.has(txt(row.id) ?? ""))) {
+    const pending = rows.filter((row) => !ids.has(txt(row.id) ?? ""))
+    for (let i = 0; i < pending.length; i++) {
+      const row = pending[i]
       upsert.run(
         txt(row.id) ?? "",
         txt(row.project_id) ?? "",
         txt(row.workspace_id) ?? null,
+        txt(row.origin_machine) ?? "unknown",
         txt(row.parent_id) ?? null,
         txt(row.slug) ?? "",
         txt(row.directory) ?? "",
@@ -237,6 +243,7 @@ export async function syncMetadata(sql: Db, db: string) {
         num(row.time_compacting) ?? null,
         num(row.time_archived) ?? null,
       )
+      if (i % 500 === 499) await new Promise((r) => setTimeout(r, 0))
     }
   } finally {
     file.close()
@@ -270,7 +277,8 @@ export async function remoteStatus(sql: Db, db: string) {
     await sql<Array<{ id: string; time_updated: number }>>`
     SELECT id, time_updated
     FROM session
-    ORDER BY id
+    ORDER BY time_updated DESC
+    LIMIT 5000
   `
   ).filter((item) => !local.has(item.id))
   if (!sessions.length) return {} as Record<string, { type: "idle" | "busy" }>
@@ -343,16 +351,28 @@ export async function pullSession(sql: Db, db: string, sessionID: string) {
       WHERE session_id IN ${sql(ids)}
       ORDER BY session_id, position
     `
-
+    const seqs = await sql<Array<Record<string, unknown>>>`
+      SELECT aggregate_id, seq
+      FROM event_sequence
+      WHERE aggregate_id IN ${sql(ids)}
+      ORDER BY aggregate_id
+    `
+    const evts = await sql<Array<Record<string, unknown>>>`
+      SELECT id, aggregate_id, seq, type, data
+      FROM event
+      WHERE aggregate_id IN ${sql(ids)}
+      ORDER BY aggregate_id, seq, id
+    `
     const upsert = meta.query(`
       INSERT INTO session (
-        id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url,
+        id, project_id, workspace_id, origin_machine, parent_id, slug, directory, title, version, share_url,
         summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
         time_created, time_updated, time_compacting, time_archived
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         project_id = excluded.project_id,
         workspace_id = excluded.workspace_id,
+        origin_machine = excluded.origin_machine,
         parent_id = excluded.parent_id,
         slug = excluded.slug,
         directory = excluded.directory,
@@ -375,6 +395,7 @@ export async function pullSession(sql: Db, db: string, sessionID: string) {
         txt(item.id) ?? "",
         txt(item.project_id) ?? "",
         txt(item.workspace_id) ?? null,
+        txt(item.origin_machine) ?? "unknown",
         txt(item.parent_id) ?? null,
         txt(item.slug) ?? "",
         txt(item.directory) ?? "",
@@ -406,41 +427,113 @@ export async function pullSession(sql: Db, db: string, sessionID: string) {
       const todoInsert = shard.query(
         "INSERT OR REPLACE INTO todo (session_id, content, status, priority, position, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
+      const seqInsert = shard.query("INSERT OR REPLACE INTO event_sequence (aggregate_id, seq) VALUES (?, ?)")
+      const evtInsert = shard.query(
+        "INSERT OR REPLACE INTO event (id, aggregate_id, seq, type, data, origin) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      shard.transaction(() => {
+        for (const item of messages) {
+          // Strip id and sessionID from data — native shards don't include them in the JSON
+          const raw = text(item.data_raw)
+          const parsed = parse(raw)
+          delete parsed.id
+          delete parsed.sessionID
+          msgInsert.run(
+            txt(item.id) ?? "",
+            txt(item.session_id) ?? "",
+            num(item.time_created) ?? null,
+            num(item.time_updated) ?? null,
+            JSON.stringify(parsed),
+          )
+        }
 
-      for (const item of messages) {
-        msgInsert.run(
-          txt(item.id) ?? "",
-          txt(item.session_id) ?? "",
-          num(item.time_created) ?? null,
-          num(item.time_updated) ?? null,
-          text(item.data_raw),
-        )
-      }
+        for (const item of parts) {
+          const raw = text(item.data_raw)
+          const data = normalize(parse(raw), Date.now())
+          // Strip id, sessionID, messageID — native shards don't include them in the JSON
+          delete data.id
+          delete data.sessionID
+          delete data.messageID
+          partInsert.run(
+            txt(item.id) ?? "",
+            txt(item.message_id) ?? "",
+            txt(item.session_id) ?? "",
+            num(item.time_created) ?? null,
+            num(item.time_updated) ?? null,
+            JSON.stringify(data),
+          )
+        }
 
-      for (const item of parts) {
-        const raw = text(item.data_raw)
-        const data = normalize(parse(raw), Date.now())
-        partInsert.run(
-          txt(item.id) ?? "",
-          txt(item.message_id) ?? "",
-          txt(item.session_id) ?? "",
-          num(item.time_created) ?? null,
-          num(item.time_updated) ?? null,
-          JSON.stringify(data),
-        )
-      }
+        for (const item of todos) {
+          todoInsert.run(
+            txt(item.session_id) ?? "",
+            txt(item.content) ?? "",
+            txt(item.status) ?? "",
+            txt(item.priority) ?? "",
+            num(item.position) ?? 0,
+            num(item.time_created) ?? null,
+            num(item.time_updated) ?? null,
+          )
+        }
 
-      for (const item of todos) {
-        todoInsert.run(
-          txt(item.session_id) ?? "",
-          txt(item.content) ?? "",
-          txt(item.status) ?? "",
-          txt(item.priority) ?? "",
-          num(item.position) ?? 0,
-          num(item.time_created) ?? null,
-          num(item.time_updated) ?? null,
-        )
-      }
+        for (const item of seqs) {
+          seqInsert.run(txt(item.aggregate_id) ?? "", num(item.seq) ?? 0)
+        }
+
+        for (const item of evts) {
+          const data = typeof item.data === "string" ? item.data : JSON.stringify(item.data ?? {})
+          evtInsert.run(
+            txt(item.id) ?? "",
+            txt(item.aggregate_id) ?? "",
+            num(item.seq) ?? 0,
+            txt(item.type) ?? "",
+            data,
+            null,
+          )
+        }
+
+        const sq = ids.map(() => "?").join(", ")
+
+        const mids = messages.map((item) => txt(item.id) ?? "")
+        if (mids.length) {
+          const qs = mids.map(() => "?").join(", ")
+          shard.query(`DELETE FROM message WHERE id NOT IN (${qs})`).run(...mids)
+        } else {
+          shard.query(`DELETE FROM message WHERE session_id IN (${sq})`).run(...ids)
+        }
+
+        const pids = parts.map((item) => txt(item.id) ?? "")
+        if (pids.length) {
+          const qs = pids.map(() => "?").join(", ")
+          shard.query(`DELETE FROM part WHERE id NOT IN (${qs})`).run(...pids)
+        } else {
+          shard.query(`DELETE FROM part WHERE session_id IN (${sq})`).run(...ids)
+        }
+
+        const keys = todos.map((item) => `${txt(item.session_id) ?? ""}:${num(item.position) ?? 0}`)
+        if (keys.length) {
+          const qs = keys.map(() => "?").join(", ")
+          shard.query(`DELETE FROM todo WHERE session_id || ':' || position NOT IN (${qs})`).run(...keys)
+        } else {
+          shard.query(`DELETE FROM todo WHERE session_id IN (${sq})`).run(...ids)
+        }
+
+        const aids = seqs.map((item) => txt(item.aggregate_id) ?? "")
+        if (aids.length) {
+          const qs = aids.map(() => "?").join(", ")
+          shard.query(`DELETE FROM event_sequence WHERE aggregate_id NOT IN (${qs})`).run(...aids)
+        } else {
+          shard.query(`DELETE FROM event_sequence WHERE aggregate_id IN (${sq})`).run(...ids)
+        }
+
+        const eids = evts.map((item) => txt(item.id) ?? "")
+        if (eids.length) {
+          const qs = eids.map(() => "?").join(", ")
+          shard.query(`DELETE FROM event WHERE id NOT IN (${qs})`).run(...eids)
+        } else {
+          shard.query(`DELETE FROM event WHERE aggregate_id IN (${sq})`).run(...ids)
+        }
+      })
     } finally {
       shard.close()
     }
