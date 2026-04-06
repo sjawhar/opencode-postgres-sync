@@ -85,7 +85,7 @@ function timeout<T>(fn: () => Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([fn(), new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
 }
 
-const plugin: Plugin = async (_, options) => {
+const plugin: Plugin = async (input, options) => {
   const url = options?.url as string
   if (!url) {
     warn("no postgres url configured (set options.url), skipping")
@@ -93,8 +93,23 @@ const plugin: Plugin = async (_, options) => {
   }
 
   const machine = (options?.machine as string) ?? os.hostname()
-  const file = (options?.db as string) ?? path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode", "opencode.db")
   const maxDays = typeof options?.backfill === "number" ? (options.backfill as number) : -1
+
+  // Resolve the correct SQLite DB path by detecting the OpenCode channel from the server version
+  const file = await (async () => {
+    if (options?.db) return options.db as string
+    const dir = path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode")
+    try {
+      const res = await fetch(new URL("/global/health", input.serverUrl))
+      const { version } = await res.json() as { version: string }
+      const channel = version.match(/^\d+\.\d+\.\d+-([a-zA-Z]+)/)?.[1]
+      if (!channel || channel === "latest" || channel === "beta")
+        return path.join(dir, "opencode.db")
+      return path.join(dir, `opencode-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`)
+    } catch {
+      return path.join(dir, "opencode.db")
+    }
+  })()
 
   let sql: ReturnType<typeof postgres>
   try {
