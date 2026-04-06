@@ -51,26 +51,6 @@ function data() {
   return path.join(process.env.XDG_DATA_HOME || path.join(home(), ".local", "share"), "opencode")
 }
 
-function globalDb() {
-  const root = data()
-  const preferred = ["opencode-local.db", "opencode.db"]
-  const rest = readdirSync(root)
-    .filter((item) => /^opencode.*\.db$/.test(item))
-    .sort((a, b) => {
-      const score = (name: string) => {
-        if (name === "opencode-local.db") return 2
-        if (name === "opencode.db") return 1
-        return 0
-      }
-      return score(a) - score(b) || a.localeCompare(b)
-    })
-  if (rest.length) return path.join(root, rest[0])
-  for (const item of preferred) {
-    const file = path.join(root, item)
-    if (existsSync(file)) return file
-  }
-  return path.join(root, "opencode-local.db")
-}
 
 function sessionDir() {
   const dir = path.join(data(), "sessions")
@@ -166,8 +146,8 @@ function localRoot(db: SQLite, id: string) {
   return row?.id ?? id
 }
 
-function localIDs() {
-  const db = new SQLite(globalDb(), { create: true })
+function localIDs(path: string) {
+  const db = open(path, { create: true })
   try {
     const row = db.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session' LIMIT 1").get() as {
       name: string
@@ -179,12 +159,11 @@ function localIDs() {
   }
 }
 
-export async function syncMetadata(sql: Db) {
-  const file = globalDb()
-  mkdirSync(path.dirname(file), { recursive: true })
-  const db = open(file, { create: true })
+export async function syncMetadata(sql: Db, db: string) {
+  mkdirSync(path.dirname(db), { recursive: true })
+  const file = open(db, { create: true })
   try {
-    const ids = localIDs()
+    const ids = localIDs(db)
     const rows = await sql<Array<Record<string, unknown>>>`
       SELECT
         s.id,
@@ -209,7 +188,7 @@ export async function syncMetadata(sql: Db) {
       FROM session s
     `
 
-    const upsert = db.query(`
+    const upsert = file.query(`
       INSERT INTO session (
         id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url,
         summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission,
@@ -260,18 +239,18 @@ export async function syncMetadata(sql: Db) {
       )
     }
   } finally {
-    db.close()
+    file.close()
   }
 }
 
-export async function refreshCheckpoints(sql: Db, machine: string) {
-  const db = new SQLite(globalDb(), { readonly: true })
+export async function refreshCheckpoints(sql: Db, db: string, machine: string) {
+  const file = open(db, { readonly: true })
   try {
-    const sessions = db.query("SELECT id FROM session ORDER BY time_updated DESC LIMIT 200").all() as Array<{
+    const sessions = file.query("SELECT id FROM session ORDER BY time_updated DESC LIMIT 200").all() as Array<{
       id: string
     }>
     for (const item of sessions) {
-      const state = checkpointState(item.id)
+      const state = checkpointState(db, item.id)
       if (!state?.safe) continue
       await saveCheckpoint(sql, {
         sessionID: item.id,
@@ -281,12 +260,12 @@ export async function refreshCheckpoints(sql: Db, machine: string) {
       })
     }
   } finally {
-    db.close()
+    file.close()
   }
 }
 
-export async function remoteStatus(sql: Db) {
-  const local = localIDs()
+export async function remoteStatus(sql: Db, db: string) {
+  const local = localIDs(db)
   const sessions = (
     await sql<Array<{ id: string; time_updated: number }>>`
     SELECT id, time_updated
@@ -311,8 +290,8 @@ export async function remoteStatus(sql: Db) {
   ) as Record<string, { type: "idle" | "busy" }>
 }
 
-export async function pullSession(sql: Db, sessionID: string) {
-  const meta = new SQLite(globalDb(), { create: true })
+export async function pullSession(sql: Db, db: string, sessionID: string) {
+  const meta = open(db, { create: true })
   try {
     const row = await sql<Array<{ id: string }>>`
       SELECT id
@@ -502,10 +481,10 @@ export async function saveCheckpoint(
   `
 }
 
-export function checkpointState(sessionID: string) {
-  const db = new SQLite(globalDb(), { readonly: true })
+export function checkpointState(db: string, sessionID: string) {
+  const meta = open(db, { readonly: true })
   try {
-    const root = localRoot(db, sessionID)
+    const root = localRoot(meta, sessionID)
     const file = path.join(sessionDir(), `${root}.db`)
     if (!existsSync(file)) return null
 
@@ -540,6 +519,6 @@ export function checkpointState(sessionID: string) {
       shard.close()
     }
   } finally {
-    db.close()
+    meta.close()
   }
 }

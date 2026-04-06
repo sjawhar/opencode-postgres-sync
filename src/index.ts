@@ -106,8 +106,8 @@ const plugin: Plugin = async (_, options) => {
 
   const sync = async () => {
     try {
-      await syncMetadata(sql)
-      await refreshCheckpoints(sql, machine)
+      await syncMetadata(sql, file)
+      await refreshCheckpoints(sql, file, machine)
     } catch (err) {
       warn("metadata sync failed", err)
     }
@@ -115,7 +115,7 @@ const plugin: Plugin = async (_, options) => {
 
   const ensure = async (sid: string) => {
     try {
-      await pullSession(sql, sid)
+      await pullSession(sql, file, sid)
     } catch (err) {
       warn("session pull failed", err)
     }
@@ -123,7 +123,7 @@ const plugin: Plugin = async (_, options) => {
 
   const status = async () => {
     try {
-      return await remoteStatus(sql)
+      return await remoteStatus(sql, file)
     } catch (err) {
       warn("remote status failed", err)
       return {}
@@ -132,7 +132,7 @@ const plugin: Plugin = async (_, options) => {
 
   const checkpoint = async (sid: string) => {
     try {
-      const state = checkpointState(sid)
+      const state = checkpointState(file, sid)
       if (!state?.safe) return
       await saveCheckpoint(sql, {
         sessionID: sid,

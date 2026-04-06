@@ -155,20 +155,20 @@ async function load() {
   }))
 
   mock.module("./local.js", () => ({
-    checkpointState() {
+    checkpointState(_: unknown, sid: string) {
       return {
         safe: true,
         checkpointTime: 123,
         lastMessageID: "msg_1",
       }
     },
-    async pullSession(_: unknown, sid: string) {
+    async pullSession(_: unknown, db: string, sid: string) {
       hit.pull.push(sid)
     },
-    async refreshCheckpoints() {
+    async refreshCheckpoints(_: unknown, db: string) {
       hit.fresh += 1
     },
-    async remoteStatus() {
+    async remoteStatus(_: unknown, db: string) {
       hit.remote += 1
       return { ses_remote: { type: "idle" as const } }
     },
@@ -178,7 +178,7 @@ async function load() {
     ) {
       hit.save.push(input)
     },
-    async syncMetadata() {
+    async syncMetadata(_: unknown, db: string) {
       hit.meta += 1
     },
   }))

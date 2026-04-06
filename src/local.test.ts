@@ -157,7 +157,7 @@ describe("local sync", () => {
       ],
     })
 
-    await syncMetadata(pg as never)
+    await syncMetadata(pg as never, meta(dir))
 
     const out = prep(meta(dir))
     const rows = out.query("SELECT id, title FROM session ORDER BY id").all() as Array<{ id: string; title: string }>
@@ -204,7 +204,7 @@ describe("local sync", () => {
       "FROM resumable_checkpoint": [{ session_id: "ses_remote", checkpoint_time: 20 }],
     })
 
-    expect(await remoteStatus(pg as never)).toEqual({
+    expect(await remoteStatus(pg as never, meta(dir))).toEqual({
       ses_remote: { type: "idle" },
     })
   })
@@ -243,7 +243,7 @@ describe("local sync", () => {
       "FROM todo": [],
     })
 
-    expect(await pullSession(pg as never, "ses_remote")).toBe(true)
+    expect(await pullSession(pg as never, meta(dir), "ses_remote")).toBe(true)
 
     const db = prep(meta(dir))
     const row = db.query("SELECT id, title FROM session WHERE id = ?").get("ses_remote") as {
