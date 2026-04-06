@@ -249,20 +249,11 @@ describe("postgres sync plugin", () => {
     expect(hit.warn).toHaveLength(0)
   })
 
-  test("skips backfill when db is missing or backfill is zero", async () => {
+  test("skips backfill when backfill is zero", async () => {
     const mod = await load()
     await (mod.default.server(
       {} as never,
-      { machine: "m1", url: "postgres://db", backfill: -1 } as never,
-    ) as Promise<Hooks>)
-    await Promise.resolve()
-    expect(hit.backfill).toEqual([])
-    expect(String(hit.warn[0]?.[0])).toContain("no sqlite db configured")
-
-    hit.warn.length = 0
-    await (mod.default.server(
-      {} as never,
-      { machine: "m1", url: "postgres://db", db: "/tmp/opencode.db", backfill: 0 } as never,
+      { machine: "m1", url: "postgres://db", backfill: 0 } as never,
     ) as Promise<Hooks>)
     await Promise.resolve()
     expect(hit.backfill).toEqual([])

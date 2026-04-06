@@ -1,4 +1,5 @@
 import os from "node:os"
+import path from "node:path"
 import postgres from "postgres"
 import { warn } from "./log.js"
 import type { Hooks, Plugin } from "@opencode-ai/plugin"
@@ -76,7 +77,7 @@ const plugin: Plugin = async (_, options) => {
   }
 
   const machine = (options?.machine as string) ?? os.hostname()
-  const file = options?.db as string | undefined
+  const file = (options?.db as string) ?? path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode", "opencode.db")
   const maxDays = typeof options?.backfill === "number" ? (options.backfill as number) : -1
 
   let sql: ReturnType<typeof postgres>
@@ -134,11 +135,7 @@ const plugin: Plugin = async (_, options) => {
     }
   }
 
-  if (!file) {
-    warn("no sqlite db configured (set options.db), skipping backfill")
-  }
-
-  if (file && maxDays !== 0) {
+  if (maxDays !== 0) {
     void backfill(sql, machine, file, maxDays)
   }
 
