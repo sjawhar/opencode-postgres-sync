@@ -95,17 +95,26 @@ const plugin: Plugin = async (input, options) => {
   const machine = (options?.machine as string) ?? os.hostname()
   const maxDays = typeof options?.backfill === "number" ? (options.backfill as number) : -1
 
-  // Resolve the correct SQLite DB path by detecting the OpenCode channel from the server version
+  // Resolve the correct SQLite DB path by detecting the OpenCode channel.
+  // Replicates packages/opencode/src/storage/db.ts getChannelPath() logic:
+  //   ["latest", "beta"].includes(CHANNEL) || OPENCODE_DISABLE_CHANNEL_DB → opencode.db
+  //   otherwise → opencode-{CHANNEL}.db
   const file = await (async () => {
     if (options?.db) return options.db as string
     const dir = path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"), "opencode")
+    if (process.env.OPENCODE_DISABLE_CHANNEL_DB === "true" || process.env.OPENCODE_DISABLE_CHANNEL_DB === "1")
+      return path.join(dir, "opencode.db")
     try {
       const res = await fetch(new URL("/global/health", input.serverUrl))
-      const { version } = await res.json() as { version: string }
-      const channel = version.match(/^\d+\.\d+\.\d+-([a-zA-Z]+)/)?.[1]
-      if (!channel || channel === "latest" || channel === "beta")
+      const { version } = (await res.json()) as { version: string }
+      // Extract channel from version prerelease.
+      // Formats: "1.3.13" (latest), "1.3.13-sami.xxx" (CI), "0.0.0-local-xxx" (dev), "0.0.0--xxx" (empty channel)
+      const pre = version.match(/^\d+\.\d+\.\d+-(.*)/)?.[1] ?? ""
+      const channel = pre.split(/[.-]/)[0] // first segment of prerelease = channel
+      if (!pre || channel === "latest" || channel === "beta")
         return path.join(dir, "opencode.db")
-      return path.join(dir, `opencode-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`)
+      const safe = channel.replace(/[^a-zA-Z0-9._-]/g, "-")
+      return path.join(dir, `opencode-${safe}.db`)
     } catch {
       return path.join(dir, "opencode.db")
     }
