@@ -61,6 +61,7 @@ export const ddl = [
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     workspace_id TEXT,
+    origin_machine TEXT DEFAULT 'unknown',
     parent_id TEXT,
     slug TEXT NOT NULL,
     directory TEXT NOT NULL,
@@ -85,6 +86,8 @@ export const ddl = [
     FOREIGN KEY (project_id) REFERENCES project(id) ON DELETE CASCADE,
     FOREIGN KEY (workspace_id) REFERENCES workspace(id) ON DELETE SET NULL
   )`,
+  `ALTER TABLE session ADD COLUMN IF NOT EXISTS origin_machine TEXT DEFAULT 'unknown'`,
+  `UPDATE session SET origin_machine = 'unknown' WHERE origin_machine IS NULL`,
   `CREATE TABLE IF NOT EXISTS session_share (
     session_id TEXT PRIMARY KEY,
     id TEXT NOT NULL,

@@ -75,11 +75,22 @@ type Phase55Hooks = Hooks & {
   "session.ensure.before"?: (
     input: {
       sessionID: string
-      mode: "get" | "messages" | "todo" | "prompt" | "prompt_async" | "command" | "shell"
+      mode: SessionEnsureMode
     },
     output: {},
   ) => Promise<void>
 }
+
+type SessionEnsureMode =
+  | "get"
+  | "messages"
+  | "todo"
+  | "prompt"
+  | "prompt_async"
+  | "command"
+  | "shell"
+  | "revert"
+  | "unrevert"
 
 function timeout<T>(fn: () => Promise<T>, ms: number, fallback: T): Promise<T> {
   return Promise.race([fn(), new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
@@ -111,8 +122,7 @@ const plugin: Plugin = async (input, options) => {
       // Formats: "1.3.13" (latest), "1.3.13-sami.xxx" (CI), "0.0.0-local-xxx" (dev), "0.0.0--xxx" (empty channel)
       const pre = version.match(/^\d+\.\d+\.\d+-(.*)/)?.[1] ?? ""
       const channel = pre.split(/[.-]/)[0] // first segment of prerelease = channel
-      if (!pre || channel === "latest" || channel === "beta")
-        return path.join(dir, "opencode.db")
+      if (!pre || channel === "latest" || channel === "beta") return path.join(dir, "opencode.db")
       const safe = channel.replace(/[^a-zA-Z0-9._-]/g, "-")
       return path.join(dir, `opencode-${safe}.db`)
     } catch {
@@ -229,10 +239,13 @@ const plugin: Plugin = async (input, options) => {
       const remote = await timeout(status, 3000, {})
       Object.assign(output.status, remote)
     },
-    "session.ensure.before": async (data: {
-      sessionID: string
-      mode: "get" | "messages" | "todo" | "prompt" | "prompt_async" | "command" | "shell"
-    }) => {
+    "session.ensure.before": async (
+      data: {
+        sessionID: string
+        mode: SessionEnsureMode
+      },
+      _: {},
+    ) => {
       await timeout(() => ensure(data.sessionID), 5000, undefined)
     },
     tool: tools(sql),

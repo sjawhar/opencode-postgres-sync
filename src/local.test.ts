@@ -29,6 +29,7 @@ function prep(file: string) {
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
       workspace_id TEXT,
+      origin_machine TEXT,
       parent_id TEXT,
       slug TEXT NOT NULL,
       directory TEXT NOT NULL,
@@ -86,11 +87,12 @@ describe("local sync", () => {
   test("syncMetadata only copies sessions missing from local sqlite", async () => {
     const db = prep(meta(dir))
     db.query(
-      "INSERT INTO session (id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO session (id, project_id, workspace_id, origin_machine, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       "ses_local",
       "p1",
       null,
+      "machine-local",
       null,
       "local",
       "/tmp",
@@ -116,6 +118,7 @@ describe("local sync", () => {
           id: "ses_local",
           project_id: "p1",
           workspace_id: null,
+          origin_machine: "machine-local-remote",
           parent_id: null,
           slug: "local",
           directory: "/tmp/local",
@@ -137,6 +140,7 @@ describe("local sync", () => {
           id: "ses_remote",
           project_id: "p2",
           workspace_id: null,
+          origin_machine: "machine-remote",
           parent_id: null,
           slug: "remote",
           directory: "/tmp/remote",
@@ -160,23 +164,28 @@ describe("local sync", () => {
     await syncMetadata(pg as never, meta(dir))
 
     const out = prep(meta(dir))
-    const rows = out.query("SELECT id, title FROM session ORDER BY id").all() as Array<{ id: string; title: string }>
+    const rows = out.query("SELECT id, title, origin_machine FROM session ORDER BY id").all() as Array<{
+      id: string
+      title: string
+      origin_machine: string | null
+    }>
     out.close()
 
     expect(rows).toEqual([
-      { id: "ses_local", title: "local" },
-      { id: "ses_remote", title: "remote" },
+      { id: "ses_local", title: "local", origin_machine: "machine-local" },
+      { id: "ses_remote", title: "remote", origin_machine: "machine-remote" },
     ])
   })
 
   test("remoteStatus only reports postgres sessions missing locally", async () => {
     const db = prep(meta(dir))
     db.query(
-      "INSERT INTO session (id, project_id, workspace_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO session (id, project_id, workspace_id, origin_machine, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       "ses_local",
       "p1",
       null,
+      "machine-local",
       null,
       "local",
       "/tmp",
@@ -219,6 +228,7 @@ describe("local sync", () => {
           id: "ses_remote",
           project_id: "p1",
           workspace_id: null,
+          origin_machine: "machine-remote",
           parent_id: null,
           slug: "remote",
           directory: "/tmp/remote",
@@ -246,13 +256,100 @@ describe("local sync", () => {
     expect(await pullSession(pg as never, meta(dir), "ses_remote")).toBe(true)
 
     const db = prep(meta(dir))
-    const row = db.query("SELECT id, title FROM session WHERE id = ?").get("ses_remote") as {
+    const row = db.query("SELECT id, title, origin_machine FROM session WHERE id = ?").get("ses_remote") as {
       id: string
       title: string
+      origin_machine: string | null
     } | null
     db.close()
 
-    expect(row).toEqual({ id: "ses_remote", title: "remote" })
+    expect(row).toEqual({ id: "ses_remote", title: "remote", origin_machine: "machine-remote" })
     expect(Bun.file(shard(dir, "ses_remote")).size).toBeGreaterThan(0)
+  })
+
+  test("pullSession refresh prunes stale shard rows", async () => {
+    prep(meta(dir)).close()
+
+    const first = sql({
+      "SELECT id FROM session WHERE id = ? LIMIT 1": [{ id: "ses_remote" }],
+      "SELECT * FROM session WHERE id IN (SELECT id FROM tree)": [
+        {
+          id: "ses_remote",
+          project_id: "p1",
+          workspace_id: null,
+          origin_machine: "machine-remote",
+          parent_id: null,
+          slug: "remote",
+          directory: "/tmp/remote",
+          title: "remote",
+          version: "1",
+          share_url: null,
+          summary_additions: null,
+          summary_deletions: null,
+          summary_files: null,
+          summary_diffs_raw: null,
+          revert_raw: null,
+          permission_raw: null,
+          time_created: 10,
+          time_updated: 20,
+          time_compacting: null,
+          time_archived: null,
+        },
+      ],
+      "WITH RECURSIVE tree AS ( SELECT id, parent_id FROM session WHERE id = ?": [{ id: "ses_remote" }],
+      "FROM message": [
+        {
+          id: "msg_1",
+          session_id: "ses_remote",
+          time_created: 10,
+          time_updated: 10,
+          data_raw: JSON.stringify({ role: "user", text: "hello" }),
+        },
+      ],
+      "FROM part": [],
+      "FROM todo": [],
+    })
+
+    expect(await pullSession(first as never, meta(dir), "ses_remote")).toBe(true)
+
+    const second = sql({
+      "SELECT id FROM session WHERE id = ? LIMIT 1": [{ id: "ses_remote" }],
+      "SELECT * FROM session WHERE id IN (SELECT id FROM tree)": [
+        {
+          id: "ses_remote",
+          project_id: "p1",
+          workspace_id: null,
+          origin_machine: "machine-remote",
+          parent_id: null,
+          slug: "remote",
+          directory: "/tmp/remote",
+          title: "remote",
+          version: "1",
+          share_url: null,
+          summary_additions: null,
+          summary_deletions: null,
+          summary_files: null,
+          summary_diffs_raw: null,
+          revert_raw: null,
+          permission_raw: null,
+          time_created: 10,
+          time_updated: 30,
+          time_compacting: null,
+          time_archived: null,
+        },
+      ],
+      "WITH RECURSIVE tree AS ( SELECT id, parent_id FROM session WHERE id = ?": [{ id: "ses_remote" }],
+      "FROM message": [],
+      "FROM part": [],
+      "FROM todo": [],
+    })
+
+    expect(await pullSession(second as never, meta(dir), "ses_remote")).toBe(false)
+
+    const db = new SQLite(shard(dir, "ses_remote"), { readonly: true })
+    const rows = db.query("SELECT count(*) as c FROM message").get() as { c: number }
+    db.close()
+
+    expect(rows.c).toBe(0)
   })
 })

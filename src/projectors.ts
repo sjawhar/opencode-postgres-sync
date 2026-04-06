@@ -1,7 +1,6 @@
 import type { Db, Tx } from "./schema.js"
 
 type Obj = Record<string, unknown>
-type Row = Record<string, string | number | null>
 
 const enc = new TextEncoder()
 
@@ -85,6 +84,7 @@ export function session(v: Obj) {
     id: txt(v.id) ?? "",
     project_id: txt(v.projectID) ?? "global",
     workspace_id: txt(v.workspaceID) ?? null,
+    origin_machine: txt(v.originMachine) ?? txt(v.origin_machine) ?? "unknown",
     parent_id: txt(v.parentID) ?? null,
     slug: txt(v.slug) ?? "",
     directory: txt(v.directory) ?? "",
@@ -99,27 +99,6 @@ export function session(v: Obj) {
     time_compacting: num(v.time_compacting) ?? null,
     time_archived: num(v.time_archived) ?? null,
   }
-}
-
-function sessionPatch(v: Obj) {
-  const time = obj(v.time)
-  const row: Row = {}
-  if ("projectID" in v) row.project_id = txt(v.projectID) ?? null
-  if ("workspaceID" in v) row.workspace_id = txt(v.workspaceID) ?? null
-  if ("parentID" in v) row.parent_id = txt(v.parentID) ?? null
-  if ("slug" in v) row.slug = txt(v.slug) ?? null
-  if ("directory" in v) row.directory = txt(v.directory) ?? null
-  if ("title" in v) row.title = txt(v.title) ?? null
-  if ("version" in v) row.version = txt(v.version) ?? null
-  if ("share" in v) row.share_url = txt(obj(v.share)?.url) ?? null
-  if ("summary_additions" in v) row.summary_additions = num(v.summary_additions) ?? null
-  if ("summary_deletions" in v) row.summary_deletions = num(v.summary_deletions) ?? null
-  if ("summary_files" in v) row.summary_files = num(v.summary_files) ?? null
-  if ("time_compacting" in v) row.time_compacting = num(v.time_compacting) ?? null
-  if ("time_archived" in v) row.time_archived = num(v.time_archived) ?? null
-  if (time && "created" in time) row.time_created = num(time.created) ?? null
-  if (time && "updated" in time) row.time_updated = num(time.updated) ?? null
-  return row
 }
 
 export function message(v: Obj) {
@@ -197,6 +176,7 @@ async function ensureSession(sql: Db, id: string, time?: number | null) {
       id,
       project_id,
       workspace_id,
+      origin_machine,
       parent_id,
       slug,
       directory,
@@ -261,6 +241,7 @@ async function replaySession(sql: Db, info: Obj) {
       id,
       project_id,
       workspace_id,
+      origin_machine,
       parent_id,
       slug,
       directory,
@@ -286,6 +267,7 @@ async function replaySession(sql: Db, info: Obj) {
       ${row.id},
       ${row.project_id},
       ${row.workspace_id},
+      ${row.origin_machine},
       ${row.parent_id},
       ${row.slug},
       ${row.directory},
@@ -311,6 +293,7 @@ async function replaySession(sql: Db, info: Obj) {
     ON CONFLICT (id) DO UPDATE SET
       project_id = EXCLUDED.project_id,
       workspace_id = EXCLUDED.workspace_id,
+      origin_machine = EXCLUDED.origin_machine,
       parent_id = EXCLUDED.parent_id,
       slug = EXCLUDED.slug,
       directory = EXCLUDED.directory,
@@ -332,30 +315,6 @@ async function replaySession(sql: Db, info: Obj) {
       time_archived = EXCLUDED.time_archived,
       data = EXCLUDED.data,
       data_raw = EXCLUDED.data_raw
-  `
-}
-
-async function updateSession(sql: Db, sid: string, info: Obj) {
-  if (!info || !sid) return
-
-  const meta = pack(info)
-  const row = sessionPatch(info)
-  const project_id = txt(info.projectID)
-  if (project_id) await ensureProject(sql, project_id)
-
-  await sql`
-    UPDATE session
-    SET data = COALESCE(${json(sql, meta.json)}, data),
-        data_raw = ${meta.raw}
-    WHERE id = ${sid}
-  `
-
-  if (!Object.keys(row).length) return
-
-  await sql`
-    UPDATE session
-    SET ${sql(row, Object.keys(row) as string[])}
-    WHERE id = ${sid}
   `
 }
 
@@ -546,66 +505,6 @@ export async function replayBus(sql: Db, evt: Bus) {
       return true
     }
 
-    return true
-  })
-}
-
-export async function replay(sql: Db, evt: Sync) {
-  return sql.begin(async (tx) => {
-    const db = run(tx)
-    const data = pack(evt.data)
-    const seen = await db`
-      INSERT INTO event (id, aggregate_id, seq, type, data, data_raw)
-      VALUES (
-        ${evt.id},
-        ${evt.aggregateID},
-        ${evt.seq},
-        ${evt.type},
-        ${json(db, data.json)},
-        ${data.raw},
-        ${data.raw}
-      )
-      ON CONFLICT (id) DO NOTHING
-      RETURNING id
-    `
-    if (!seen.length) return false
-
-    if (evt.type === "session.created.1") {
-      const info = obj(evt.data.info)
-      if (info) await replaySession(db, info)
-      return true
-    }
-    if (evt.type === "session.updated.1") {
-      const info = obj(evt.data.info)
-      const sid = txt(evt.data.sessionID)
-      if (info && sid) await updateSession(db, sid, info)
-      return true
-    }
-    if (evt.type === "session.deleted.1") {
-      const sid = txt(evt.data.sessionID) ?? txt(obj(evt.data.info)?.id)
-      if (sid) await db`DELETE FROM session WHERE id = ${sid}`
-      return true
-    }
-    if (evt.type === "message.updated.1") {
-      const info = obj(evt.data.info)
-      if (info) await upsertMessage(db, info)
-      return true
-    }
-    if (evt.type === "message.removed.1") {
-      const id = txt(evt.data.messageID)
-      if (id) await db`DELETE FROM message WHERE id = ${id}`
-      return true
-    }
-    if (evt.type === "message.part.updated.1") {
-      const item = obj(evt.data.part)
-      if (item) await upsertPart(db, item, num(evt.data.time))
-      return true
-    }
-    if (evt.type === "message.part.removed.1") {
-      const id = txt(evt.data.partID)
-      if (id) await db`DELETE FROM part WHERE id = ${id}`
-      return true
-    }
     return true
   })
 }
