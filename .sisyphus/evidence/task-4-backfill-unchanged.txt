@@ -1,0 +1,14 @@
+T4 Verification: backfill.ts is unchanged
+
+backfill.ts imports from replication.ts:
+  - fresh() — checks if replication state exists for machine
+  - save() — saves last_event_id/last_seq
+
+The new replayBus() function does NOT use replication.ts at all.
+replayBus() projects directly to session/message/part tables without event table writes.
+
+Therefore replication.ts is ONLY used by the backfill path (old replay() + SSE sync format).
+No changes needed to replication.ts for the hooks path.
+
+Backfill path: UNTOUCHED. Still uses old replay() → source() → event table → replication_state.
+Hooks path: Uses new replayBus() → session/message/part tables directly. No event table, no replication_state.

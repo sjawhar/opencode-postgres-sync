@@ -1,0 +1,10 @@
+$ bun test src/projectors.test.ts --test-name-pattern "message.part"
+bun test v1.3.11 (af24e281)
+
+ 4 pass
+ 9 filtered out
+ 0 fail
+ 11 expect() calls
+Ran 4 tests across 1 file. [9.00ms]
+
+Note: `message.part.delta` remains intentionally ignored for task 2; the focused run covers the bus-facing `message.part.updated` and `message.part.removed` projector routing/mapping assertions.

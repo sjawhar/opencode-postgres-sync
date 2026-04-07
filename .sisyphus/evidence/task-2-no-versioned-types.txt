@@ -1,0 +1,11 @@
+$ bun typecheck
+$ tsc --noEmit
+
+$ grep -n 'created\.1\|updated\.1\|removed\.1\|deleted\.1' src/projectors.ts
+No matches found in src/projectors.ts.
+
+$ lsp_diagnostics src/projectors.ts --severity error
+No diagnostics found
+
+$ lsp_diagnostics src/projectors.test.ts --severity error
+No diagnostics found

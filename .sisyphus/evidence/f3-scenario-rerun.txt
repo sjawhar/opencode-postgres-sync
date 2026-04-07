@@ -1,0 +1,39 @@
+F3 Scenario 1: Task QA Re-execution
+=====================================
+
+## T2: Projector tests
+Command: bun test src/projectors.test.ts
+Result: 13 pass, 0 fail, 37 expect() calls
+PASS ✅
+
+## T2: No versioned types in Bus pathway
+Command: grep -n 'created\.1\|updated\.1\|removed\.1\|deleted\.1' src/projectors.ts
+Result: Found versioned types at lines 596,601,607,612,617,622,627
+Analysis: These are in the replay() function (line 574) which handles Sync events
+  from the event store — versioned types (.1 suffix) are correct there.
+  The Bus pathway (routeBus lines 484-527, replayBus line 529) uses
+  non-versioned types (session.created, session.updated, etc.) — correct.
+PASS ✅ (versioned types exist only in Sync path, not Bus path)
+
+## T3: No consumer in index.ts
+Command: grep -n "consumer" src/index.ts
+Result: exit 1 (no matches)
+PASS ✅
+
+## T5: consumer.ts deleted
+Command: ls src/consumer.ts
+Result: "No such file or directory" (exit 2)
+PASS ✅
+
+## T5: No serverUrl in src/
+Command: grep -rn "serverUrl" src/
+Result: exit 1 (no matches)
+PASS ✅
+
+## T6: Full CI
+- bun typecheck: PASS (tsc --noEmit clean)
+- bun run format: WARN on .sisyphus/notepads/ file only (not source code) — source passes
+- bun test: 22 pass, 0 fail, 59 expect() across 3 files
+PASS ✅
+
+Scenarios: 6/6 pass

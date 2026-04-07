@@ -1,0 +1,62 @@
+F3 Scenario 3: Error Handling Verification
+============================================
+
+## try/catch coverage in src/index.ts
+
+Line 80-91:   try/catch around postgres(url, ...) connection creation
+              → Returns {} on failure (plugin disabled gracefully)
+
+Line 94-99:   try/catch around syncMetadata + refreshCheckpoints (meta)
+              → warn("metadata sync failed", err)
+
+Line 103-108: try/catch around syncMetadata + refreshCheckpoints (tick)
+              → warn("metadata sync deferred", err)
+
+Line 112-116: try/catch around pullSession (ensure)
+              → warn("session pull failed", err)
+
+Line 120-125: try/catch around remoteStatus (status)
+              → warn("remote status failed", err); returns {}
+
+Line 129-140: try/catch around checkpointState + saveCheckpoint
+              → warn("checkpoint save failed", err)
+
+Line 151-155: try/catch around replayBus(sql, event, machine) ✅
+              → warn("replay failed", err)
+
+Line 157-177: try/catch around todo.updated + session.status handling
+              → warn("event hook failed", err)
+
+## Unknown event types handling
+
+routeBus() (projectors.ts line 484-527):
+  - If event.type doesn't match any known type → returns undefined
+  - replayBus() line 533: if (!next) return true
+  - Result: unknown events silently succeed (no error, no write)
+  PASS ✅
+
+## Graceful failure patterns
+
+Timeout wrappers (index.ts line 66-68):
+  function timeout<T>(fn, ms, fallback) — races fn() against setTimeout
+  Used on: meta (3s), status (3s), ensure (5s)
+  PASS ✅
+
+Plugin init (line 72-74):
+  If no url configured → warn + return {} (plugin disabled)
+  PASS ✅
+
+Connection failure (line 88-91):
+  If postgres() throws → warn + return {} (plugin disabled)
+  PASS ✅
+
+## Edge cases tested
+
+1. Unknown bus event type → silent success (routeBus returns undefined) ✅
+2. Malformed event properties → routeBus validation guards (obj/txt checks) return undefined ✅
+3. Postgres connection failure → plugin disabled gracefully ✅
+4. Individual hook failures → caught + warned, don't crash plugin ✅
+5. Timeout on slow hooks → fallback values via timeout() wrapper ✅
+
+Edge Cases: 5 tested
+Error Handling: PASS

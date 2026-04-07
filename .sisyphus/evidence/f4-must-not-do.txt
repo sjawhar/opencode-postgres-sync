@@ -1,0 +1,28 @@
+F4 Must-NOT-Do Compliance Check
+===============================
+
+Scenario 2
+----------
+
+1) Core repo must remain untouched
+- PASS: /home/ubuntu/opencode/db -> jj diff --git -- packages/opencode/ returned empty output
+
+2) No unrelated event handling in src/projectors.ts
+- PASS: grep pattern pty|file\.edited|permission|question|lsp in src/projectors.ts returned no matches
+
+3) src/schema.ts must remain unchanged
+- FAIL: jj diff --git -r @- -- src/schema.ts shows a new 208-line file
+
+4) package.json must not add new dependencies
+- FAIL: jj diff --git -r @- -- package.json shows a new file with dependencies/devDependencies:
+  - dependencies.postgres = ^3.4.5
+  - devDependencies: @opencode-ai/plugin, @tsconfig/node22, @types/bun, @types/node, prettier, typescript
+
+Summary
+-------
+- Core repo untouched: PASS
+- Unrelated events absent from projectors.ts: PASS
+- schema.ts unchanged: FAIL
+- No new dependencies: FAIL
+
+Scenario 2 result: FAIL

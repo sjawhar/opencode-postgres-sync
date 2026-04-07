@@ -1,0 +1,43 @@
+F4 Scope Fidelity Check
+=======================
+
+Reviewed repo: /home/ubuntu/opencode/opencode-postgres-sync
+Reviewed change: @- = woouoxuo / 7302cb1f
+Commit message: refactor(postgres-sync): replace SSE consumer with direct bus event hooks
+
+Scenario 1: Deliverables match spec
+-----------------------------------
+
+1) jj log --limit 3
+@  lrrlvwrm sami@trajectorylabs.net 2026-04-05 18:23:56 ebc42d6f
+│  (no description set)
+○  woouoxuo sami@trajectorylabs.net 2026-04-05 18:20:54 feat/postgres-sync-plugin* 7302cb1f
+│  refactor(postgres-sync): replace SSE consumer with direct bus event hooks
+◆  ulmnkzos sami@trajectorylabs.net 2026-04-04 12:40:29 main@origin c8266772
+│  docs: initialize repository
+
+2) jj diff --git -r @- --stat
+36 files changed, 3606 insertions(+), 1 deletion(-)
+
+Key paths present in reviewed change:
+- PASS: src/projectors.ts is changed
+- PASS: src/projectors.test.ts is changed
+- PASS: src/index.ts is changed
+
+Key path behavior checks:
+- PASS: src/index.ts imports replayBus from ./projectors.js at line 14
+- PASS: src/index.ts hooks.event() calls replayBus(sql, event, machine) at lines 149-155
+- PASS: src/index.ts still routes todo.updated via syncTodos(...) at lines 157-169
+- PASS: src/index.ts still checkpoints idle session.status at lines 171-174
+- PASS: src/projectors.ts routeBus()/replayBus() handle session.created, session.updated, session.deleted, message.updated, message.removed, message.part.updated, message.part.removed at lines 504-571
+
+Spec mismatches:
+- FAIL: src/replication.ts is CHANGED, but scenario 1 requires it to be unchanged
+  Evidence: jj diff --git -r @- -- src/replication.ts shows a new 85-line file
+- FAIL: src/consumer.ts deletion is not present as a diffable path in the reviewed change
+  Evidence: jj diff --git -r @- -- src/consumer.ts => "Warning: No matching entries for paths: src/consumer.ts"
+
+Core repo isolation:
+- PASS: /home/ubuntu/opencode/db -> jj diff --git -- packages/opencode/ returned empty output
+
+Scenario 1 result: FAIL

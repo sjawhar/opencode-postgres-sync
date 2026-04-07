@@ -1,0 +1,45 @@
+F4 Cross-Task Contamination Check
+================================
+
+Scenario 3
+----------
+
+Reviewed commit message:
+- refactor(postgres-sync): replace SSE consumer with direct bus event hooks
+
+Observed changed-file footprint:
+- 36 changed paths total
+- Expected by scope check: src/projectors.ts, src/projectors.test.ts, src/index.ts, src/consumer.ts deletion
+- Actually present from that expected set: src/projectors.ts, src/projectors.test.ts, src/index.ts
+- Missing expected deletion path: src/consumer.ts
+- Unaccounted changed files: 33
+
+Examples of unaccounted paths in reviewed change:
+- .github/workflows/ci.yml
+- .gitignore
+- README.md
+- bun.lock
+- package.json
+- src/backfill.ts
+- src/index.check.ts
+- src/index.test.ts
+- src/local.ts
+- src/log.ts
+- src/replication.ts
+- src/resume.test.ts
+- src/resume.ts
+- src/schema.ts
+- src/tools.ts
+- tsconfig.json
+- multiple .sisyphus/evidence/* files and .sisyphus/notepads/postgres-sync-hooks/learnings.md
+
+Contamination issues:
+1) The reviewed change is a repo bootstrap / broad feature drop, not a narrowly scoped T2-T5 delta
+2) src/replication.ts changed despite explicit expectation that hooks path should not touch it
+3) src/schema.ts changed despite explicit expectation that schema should stay untouched
+4) package.json adds dependencies/devDependencies contrary to the must-not-do check
+5) src/consumer.ts deletion is not represented as a reviewed diff path, so the requested deletion check cannot be validated from this change
+
+Assessment
+----------
+Tasks [0/4 compliant] | Contamination [5 issues] | Unaccounted [33 files] | VERDICT: REJECT
